@@ -36,7 +36,7 @@ test('access: every wrong token is refused', async () => {
   const cases = {
     none: null,
     garbage: 'a.b',
-    otherAddress: sign({...good, email: 'someone@else.com'}),
+    otherAddress: sign({...good, email: 'someone@example.org'}),
     otherApp: sign({...good, aud: ['d'.repeat(64)]}),
     otherTeam: sign({...good, iss: 'https://other.cloudflareaccess.com'}),
     expired: sign({...good, exp: NOW - 1}),

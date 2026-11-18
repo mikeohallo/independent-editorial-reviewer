@@ -1,6 +1,6 @@
 # Independent Editorial Reviewer: steps for Claude Code
 
-These are the app's own steps. The owner's machine rules come first and win where they differ.
+These are the app's own steps. The owner's machine rules come first and win where they differ. The rules for anything that lands on GitHub are in `AGENTS.md`: read it first.
 
 ## Deploy line
 
