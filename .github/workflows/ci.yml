@@ -19,7 +19,7 @@ jobs:
           cache: npm
       - name: Install
         run: npm ci
-      - name: Legacy v4.1 unchanged (hash since 18 Nov 2026: two example strings made generic)
+      - name: Legacy v4.1 as reviewed (hash updated 18 Nov 2026 when two example strings were made generic)
         run: echo "e34303574abc69b64666621d74edce0cef9dc2687641bd5ff22ae517f10a3950  src/legacy-v4.1.mjs" | sha256sum -c -
       - name: Unit tests
         run: npm test
