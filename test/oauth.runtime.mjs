@@ -45,7 +45,7 @@ test('login layer: discovery, Access-guarded consent, PKCE, inner-key bridge', a
 
     // The sign-in page refuses anything but a valid Access token for the one address.
     assert.equal((await get(authorizePath)).status, 403);
-    for (const bad of [{email: 'someone@else.com'}, {aud: 'b'.repeat(64)}, {iss: 'https://other.cloudflareaccess.com'}, {exp: Math.floor(Date.now() / 1000) - 5}, {kid: 'unknown'}, {key: generateKeyPairSync('rsa', {modulusLength: 2048}).privateKey}]) {
+    for (const bad of [{email: 'someone@example.org'}, {aud: 'b'.repeat(64)}, {iss: 'https://other.cloudflareaccess.com'}, {exp: Math.floor(Date.now() / 1000) - 5}, {kid: 'unknown'}, {key: generateKeyPairSync('rsa', {modulusLength: 2048}).privateKey}]) {
       const r = await get(authorizePath, {headers: {'Cf-Access-Jwt-Assertion': accessJwt(bad)}});
       assert.equal(r.status, 403, `refused: ${Object.keys(bad)[0]}`);
     }

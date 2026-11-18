@@ -52,6 +52,10 @@ python test/browser/consent_browser.py   # needs Playwright with Chromium
 
 Nothing here needs a Cloudflare login, a key or a network service.
 
+## Contributing
+
+Everything here is public. Read [AGENTS.md](AGENTS.md) before opening an issue or pull request: it applies to people and AI agents alike.
+
 ## Licence
 
 [MIT](LICENSE). Security reports: see [SECURITY.md](SECURITY.md).

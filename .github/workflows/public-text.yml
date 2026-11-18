@@ -1,0 +1,30 @@
+name: Public text check
+
+# Issues and comments are public the moment they're posted (AGENTS.md section 1).
+# This runs the same check as CI on their text. It reads only the event's text
+# and runs the script from the default branch; it executes nothing from the issue.
+on:
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  text:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Issue or comment text (AGENTS.md section 1)
+        env:
+          PUBLIC_CHECK_TERMS: ${{ secrets.PUBLIC_CHECK_TERMS }}
+          REQUIRE_TERMS: '1'
+          ISSUE_TITLE: ${{ github.event_name == 'issues' && github.event.issue.title || '' }}
+          ISSUE_BODY: ${{ github.event_name == 'issues' && github.event.issue.body || '' }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: node scripts/public-check.mjs --text ISSUE_TITLE,ISSUE_BODY,COMMENT_BODY

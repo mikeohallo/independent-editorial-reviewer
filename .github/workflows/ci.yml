@@ -13,10 +13,25 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
+      - name: Public-repo check (AGENTS.md; files, commit messages, pull request text)
+        env:
+          PUBLIC_CHECK_TERMS: ${{ secrets.PUBLIC_CHECK_TERMS }}
+          REQUIRE_TERMS: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && '1' || '0' }}
+          CHECK_RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || 'origin/main..HEAD' }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/public-check.mjs
+      - name: Secrets scan (gitleaks v8.30.1, checksum-verified through the Go module proxy)
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          "$(go env GOPATH)/bin/gitleaks" git --config .gitleaks.toml --redact --no-banner .
       - name: Install
         run: npm ci
       - name: Legacy v4.1 as reviewed (hash updated 18 Nov 2026 when two example strings were made generic)
