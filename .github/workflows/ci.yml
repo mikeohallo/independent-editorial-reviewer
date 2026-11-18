@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Legacy v4.1 unchanged (hash since 18 Nov 2026: two example strings made generic)
+        run: echo "e34303574abc69b64666621d74edce0cef9dc2687641bd5ff22ae517f10a3950  src/legacy-v4.1.mjs" | sha256sum -c -
+      - name: Unit tests
+        run: npm test
+      - name: Runtime tests (the reviewer, and the login end to end; dry-run builds, no login, no deploy)
+        run: npm run test:runtime
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Browser for the consent test
+        run: |
+          pip install playwright==1.63.0
+          python -m playwright install --with-deps chromium
+      - name: Allow clicked in a real browser reaches claude.ai's return address
+        run: python test/browser/consent_browser.py
+        env:
+          SCREENSHOT_DIR: ${{ runner.temp }}/consent

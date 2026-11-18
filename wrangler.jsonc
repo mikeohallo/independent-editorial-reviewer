@@ -1,0 +1,91 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "claude-openai-reviewer",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-11-17",
+  "keep_vars": true,
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "reviewer.mikeohalloran.au",
+      "custom_domain": true
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "EDITORIAL_JOBS",
+        "class_name": "EditorialJob"
+      },
+      {
+        "name": "EDITORIAL_BUDGET",
+        "class_name": "EditorialBudget"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "editorial-v5-1",
+      "new_sqlite_classes": [
+        "EditorialJob",
+        "EditorialBudget"
+      ]
+    }
+  ],
+  "vars": {
+    "EDITORIAL_ENABLED": "1",
+    "EDITORIAL_MODEL": "gpt-6.1-sol",
+    "EDITORIAL_REASONING_EFFORT": "high",
+    "EDITORIAL_MAX_JOB_USD": "1",
+    "EDITORIAL_DAILY_USD": "1",
+    "WORKSPACE_ROOT_FOLDER_ID": "SET-AT-DEPLOY",
+    "SUBMISSIONS_FOLDER_ID": "SET-AT-DEPLOY",
+    "REFERENCES_FOLDER_ID": "SET-AT-DEPLOY",
+    "EDITORIAL_FOLDER_ID": "SET-AT-DEPLOY",
+    "DRIVE_ACCESS_MODE": "full",
+    "BROAD_DRIVE_SCOPE_ACK": "I_UNDERSTAND_FULL_DRIVE_ACCESS",
+    "PROJECT_CONTEXT_FILE_IDS": "",
+    "ACCESS_TEAM_DOMAIN": "mikeohalloran.cloudflareaccess.com",
+    "ACCESS_AUD": "3d80cb490690cda8c1030ffd6ec55dbb57dabafa4fc7f5b7791813012d0e87d1"
+  },
+  "env": {
+    "staging": {
+      "name": "claude-openai-reviewer-v5-staging",
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "EDITORIAL_JOBS",
+            "class_name": "EditorialJob"
+          },
+          {
+            "name": "EDITORIAL_BUDGET",
+            "class_name": "EditorialBudget"
+          }
+        ]
+      },
+      "vars": {
+        "EDITORIAL_ENABLED": "0",
+        "EDITORIAL_MODEL": "gpt-6.1-sol",
+        "EDITORIAL_REASONING_EFFORT": "high",
+        "EDITORIAL_MAX_JOB_USD": "1",
+        "EDITORIAL_DAILY_USD": "1",
+        "WORKSPACE_ROOT_FOLDER_ID": "SET-AT-DEPLOY",
+        "SUBMISSIONS_FOLDER_ID": "SET-AT-DEPLOY",
+        "REFERENCES_FOLDER_ID": "SET-AT-DEPLOY",
+        "EDITORIAL_FOLDER_ID": "SET-AT-DEPLOY",
+        "DRIVE_ACCESS_MODE": "full",
+        "BROAD_DRIVE_SCOPE_ACK": "I_UNDERSTAND_FULL_DRIVE_ACCESS",
+        "PROJECT_CONTEXT_FILE_IDS": ""
+      }
+    }
+  }
+}

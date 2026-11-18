@@ -1,0 +1,12 @@
+node_modules/
+.wrangler/
+.test-build/
+.test-build-oauth/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+google-client.json
+google-secrets.json
+*.log
+.DS_Store

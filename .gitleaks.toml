@@ -1,0 +1,10 @@
+# Secret scanning config for gitleaks (https://github.com/gitleaks/gitleaks).
+[extend]
+useDefault = true
+
+# The Cloudflare Access application audience tag is not a secret: it is carried in
+# every Access token and grants nothing on its own. Allow only that exact line shape.
+[[allowlists]]
+description = "Cloudflare Access audience tag (public)"
+regexTarget = "line"
+regexes = ['''^\s*"ACCESS_AUD": "[0-9a-f]{64}",?\s*$''']

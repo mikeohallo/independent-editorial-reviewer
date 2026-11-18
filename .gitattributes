@@ -1,0 +1,4 @@
+# Same bytes on every machine: Git for Windows defaults to core.autocrlf=true,
+# which would check files out with CRLF and make the deploy script's clean-tree
+# check (run with the PC's git settings off) see every file as changed.
+* text=auto eol=lf

@@ -1,0 +1,21 @@
+{
+  "name": "claude-openai-editorial-reviewer",
+  "private": true,
+  "version": "5.0.0-candidate.1",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "dev": "node node_modules/wrangler/bin/wrangler.js dev",
+    "connect-google": "node scripts/connect-google.mjs",
+    "test:runtime": "node node_modules/wrangler/bin/wrangler.js deploy --dry-run --env= --outdir .test-build test/runtime-entry/index.mjs && node node_modules/wrangler/bin/wrangler.js deploy --dry-run --env= --outdir .test-build-oauth && node --test test/runtime.mjs test/oauth.runtime.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "wrangler": "4.163.0"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.4"
+  }
+}
