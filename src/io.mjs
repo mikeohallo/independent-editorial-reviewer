@@ -1,3 +1,4 @@
+import {boundedJSON} from './visual-limits.mjs';
 export const MAX_FILE_BYTES=20*1024*1024;
 export const MAX_CONTEXT_BYTES=45*1024*1024;
 const DRIVE='https://www.googleapis.com/drive/v3';
@@ -18,22 +19,26 @@ export async function api(env,path,options={}){
   if(!r.ok)throw Error(`OpenAI HTTP ${r.status} at ${path.split('?')[0]}. Check API access, model and input limits; no paid request was automatically repeated.`);
   return r.status===204?{}:r.json();
 }
-export async function googleToken(env){
+export async function googleToken(env,context){
   const cached=tokens.get(env);if(cached&&cached.expires>Date.now()+60000)return cached.value;
   if(!env.GOOGLE_CLIENT_ID||!env.GOOGLE_CLIENT_SECRET||!env.GOOGLE_REFRESH_TOKEN)throw Error('Google Drive OAuth secrets are not configured.');
-  const response=await fetch('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,refresh_token:env.GOOGLE_REFRESH_TOKEN,grant_type:'refresh_token'}),redirect:'manual',signal:AbortSignal.timeout(20000)});
+  const response=await (context?.fetch ?? fetch)('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,refresh_token:env.GOOGLE_REFRESH_TOKEN,grant_type:'refresh_token'}),redirect:'manual',signal:AbortSignal.timeout(20000)});
   if(!response.ok)throw Error(`Google OAuth HTTP ${response.status}; reconnect the server's Google account.`);
-  const data=await response.json();if(!data.access_token)throw Error('Google did not return an access token.');
+  const data=context?await boundedJSON(response,context.signal):await response.json();if(!data.access_token)throw Error('Google did not return an access token.');
   driveAccessMode(env); // Prevent using credentials under a different declared access mode.
   tokens.set(env,{value:data.access_token,expires:Date.now()+Number(data.expires_in??3600)*1000});return data.access_token;
 }
-async function driveFetch(env,url,options={}){
-  const r=await fetch(url,{...options,headers:{Authorization:`Bearer ${await googleToken(env)}`,...options.headers},redirect:'manual',signal:AbortSignal.timeout(45000)});
+export async function driveFetch(env,url,options={},context){
+  const r=await (context?.fetch ?? fetch)(url,{...options,headers:{Authorization:`Bearer ${await googleToken(env,context)}`,...options.headers},redirect:'manual',signal:AbortSignal.timeout(45000)});
   if(!r.ok)throw Error(`Google Drive HTTP ${r.status}; verify server account access and file/folder permissions.`);return r;
 }
-export async function metadata(env,id){
+export async function metadata(env,id,context){
   if(typeof id!=='string'||!/^[A-Za-z0-9_-]{10,200}$/.test(id))throw Error('Invalid Drive identifier.');
-  return (await driveFetch(env,`${DRIVE}/files/${id}?supportsAllDrives=true&fields=id,name,mimeType,parents,version,modifiedTime,size,trashed`)).json();
+  if(context?.cache.has(id))return context.cache.get(id);
+  const r=await driveFetch(env,`${DRIVE}/files/${id}?supportsAllDrives=true&fields=id,name,mimeType,parents,version,modifiedTime,size,trashed${context?',originalFilename,headRevisionId,shortcutDetails':''}`,{},context);
+  const data=context?await boundedJSON(r,context.signal):await r.json();
+  if(context){if(data.id!==id)throw Error('Drive metadata identifier mismatch.');if(!Array.isArray(data.parents)||data.parents.length>1)throw Error('Ambiguous Drive ancestry.');context.cache.set(id,data);}
+  return data;
 }
 // Enforce the deliberately selected workspace at the server, independently of OAuth breadth.
 // The root, submission, reference and report folders were created empty for this reviewer.
@@ -53,18 +58,18 @@ export function workspaceConfiguration(env){
   if(new Set(values).size!==4)throw Error('Workspace folders must be distinct.');
   return Object.fromEntries(keys.map((k,i)=>[k,values[i]]));
 }
-export async function assertWorkspaceFolderLayout(env){
+export async function assertWorkspaceFolderLayout(env,context){
   const c=workspaceConfiguration(env);
-  const root=await metadata(env,c.WORKSPACE_ROOT_FOLDER_ID);
+  const root=await metadata(env,c.WORKSPACE_ROOT_FOLDER_ID,context);
   if(root.trashed||root.mimeType!=='application/vnd.google-apps.folder')throw Error('Workspace root is missing or not a folder.');
   for(const key of ['SUBMISSIONS_FOLDER_ID','REFERENCES_FOLDER_ID','EDITORIAL_FOLDER_ID']){
-    const m=await metadata(env,c[key]);
+    const m=await metadata(env,c[key],context);
     if(m.trashed||m.mimeType!=='application/vnd.google-apps.folder'||!m.parents?.includes(c.WORKSPACE_ROOT_FOLDER_ID))
       throw Error(`${key} must be a direct child folder of the approved workspace root.`);
   }
   return c;
 }
-export async function assertWorkspaceSource(env,meta,role){
+export async function assertWorkspaceSource(env,meta,role,context){
   const c=workspaceConfiguration(env);
   const allow={current:['SUBMISSIONS_FOLDER_ID'],previous:['SUBMISSIONS_FOLDER_ID'],
     script:['SUBMISSIONS_FOLDER_ID','REFERENCES_FOLDER_ID'],
@@ -80,7 +85,7 @@ export async function assertWorkspaceSource(env,meta,role){
     if(id===c.EDITORIAL_FOLDER_ID)throw Error('Report files cannot be used as inputs. Submit a clean copy through submissions/references.');
     if(id===c.WORKSPACE_ROOT_FOLDER_ID)continue;
     if(++steps>40)throw Error('Workspace source ancestry could not be verified.');
-    const m=await metadata(env,id);
+    const m=await metadata(env,id,context);
     if(m.trashed||m.mimeType!=='application/vnd.google-apps.folder')throw Error('Source ancestor is invalid or in Trash.');
     if(allowed.has(id)){
       // The allowed folder itself must still be immediately inside the approved root.

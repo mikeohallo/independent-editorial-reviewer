@@ -1,12 +1,14 @@
 # Independent OpenAI Reviewer MCP — Complete System Guide
 
-**Production version:** `5.0.0-clean-workspace.1` (editorial rubric `independent-editorial-general-v1`)  
+**Source candidate:** `5.1.0-candidate.1` (editorial rubric `independent-editorial-general-v1`)
 **Legacy engine:** v4.1.0 (preserved)  
 **Document date:** 18 November 2026  
-**Status:** Active in Cloudflare production and discoverable in Claude; end-to-end editorial review tested in staging  
+**Status:** v5.1 is an undeployed candidate. Existing rollout notes below describe the earlier deployment, not validation of v5.1.
 **Document purpose:** What the system does, how to use it, where information flows, its controls, and how to maintain it.
 
 > This guide describes the inspected v5 source plus the deployment and live tests verified during rollout. It is documentation, not a guarantee of editorial accuracy or a substitute for the current deployed configuration. Do not put API keys, MCP tokens, OAuth refresh tokens, or customer manuscripts in this repository.
+
+The [v5.1 private image guide](PRIVATE_IMAGES.md) supplements the two visual tools with private Drive locators, durable attempt tracking, budget enforcement and cleanup. Legacy URL/data calls retain their previous behavior. The deployment history below is unchanged.
 
 ## 1. At a glance
 

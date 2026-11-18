@@ -1,7 +1,7 @@
 {
   "name": "claude-openai-editorial-reviewer",
   "private": true,
-  "version": "5.0.0-candidate.1",
+  "version": "5.1.0-candidate.1",
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs",
@@ -16,6 +16,7 @@
     "wrangler": "4.163.0"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "1.2.4"
+    "@cloudflare/workers-oauth-provider": "1.2.4",
+    "jpeg-js": "0.4.4"
   }
 }

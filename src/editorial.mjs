@@ -1,4 +1,4 @@
-export const VERSION = '5.0.0-clean-workspace.1';
+export const VERSION = '5.1.0-candidate.1';
 export const RUBRIC_VERSION = 'independent-editorial-general-v1';
 export const CATEGORIES = ['story_logic','structure','pacing','character_agency','character_relationships','humour_dialogue','emotional_payoff','age_suitability','panel_sequence','visual_continuity','art_composition','lettering','script_fidelity'];
 export const VISUAL_ONLY = ['visual_continuity','art_composition','lettering','script_fidelity'];
