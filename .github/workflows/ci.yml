@@ -36,6 +36,8 @@ jobs:
         run: npm ci
       - name: Legacy v4.1 as reviewed (hash updated 18 Nov 2026 when two example strings were made generic)
         run: echo "e34303574abc69b64666621d74edce0cef9dc2687641bd5ff22ae517f10a3950  src/legacy-v4.1.mjs" | sha256sum -c -
+      - name: Generated legacy wrapper matches the protected file exactly
+        run: node scripts/generate-legacy-visual.mjs --check
       - name: Unit tests
         run: npm test
       - name: Runtime tests (the reviewer, and the login end to end; dry-run builds, no login, no deploy)

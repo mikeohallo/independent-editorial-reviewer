@@ -34,7 +34,8 @@ const LOGIN_SCOPES = ['account:read', 'user:read', 'workers:write', 'workers_scr
 const STAGING_SECRETS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_OAUTH_SCOPE', 'GOOGLE_REFRESH_TOKEN', 'MCP_ACCESS_TOKEN', 'OPENAI_API_KEY'];
 const PRODUCTION_SECRETS = [...STAGING_SECRETS, 'ALLOWED_EMAIL'];
 
-// The reviewer's settings, as reviewed (read live on both Workers, 18 Nov 2026).
+// The reviewer's settings, as reviewed (read live on both Workers, 18 Nov 2026;
+// daily total raised from 1 to 5 with v5.1, on the owner's approval).
 // A change to a money cap, the model or Drive access must change this too, so it
 // shows in review. The two Access values are checked by pattern. The four Drive
 // folder IDs come from the settings file at deploy time; the live-settings check
@@ -43,7 +44,7 @@ const COMMON_VARS = {
   EDITORIAL_MODEL: 'gpt-6.1-sol',
   EDITORIAL_REASONING_EFFORT: 'high',
   EDITORIAL_MAX_JOB_USD: '1',
-  EDITORIAL_DAILY_USD: '1',
+  EDITORIAL_DAILY_USD: '5',
   WORKSPACE_ROOT_FOLDER_ID: 'SET-AT-DEPLOY',
   SUBMISSIONS_FOLDER_ID: 'SET-AT-DEPLOY',
   REFERENCES_FOLDER_ID: 'SET-AT-DEPLOY',
@@ -309,7 +310,7 @@ function checkApp() {
     const diff = [...new Set([...Object.keys(rest), ...Object.keys(expectedRest)])].filter(k => !deepEqual(rest[k], expectedRest[k]));
     stop(`wrangler.jsonc differs from the reviewed settings in: ${diff.join(', ') || 'key order'}`);
   }
-  ok(`wrangler.jsonc equals the reviewed settings: Worker ${PRODUCTION} on ${HOST} only (workers.dev off), staging ${STAGING} with no address and editorial off, caps US$1 a job and US$1 a day, model gpt-6.1-sol, Drive mode full, Drive folders filled in at deploy.`);
+  ok(`wrangler.jsonc equals the reviewed settings: Worker ${PRODUCTION} on ${HOST} only (workers.dev off), staging ${STAGING} with no address and editorial off, caps US$1 a job and US$5 a day, model gpt-6.1-sol, Drive mode full, Drive folders filled in at deploy.`);
   ok(`migrations: ${tags.join(', ')}${newTags.length ? ` (new: ${newTags.join(', ')}, allowed by the line)` : ' (already applied)'}.`);
   const accessReal = /^[a-z0-9-]+\.cloudflareaccess\.com$/.test(access.team || '') && /^[0-9a-f]{64}$/.test(access.aud || '');
   if (!accessReal) {
@@ -477,7 +478,11 @@ function liveVersion(name, env) {
 // the dashboard, the owner's own route for secrets): compare the live version's settings
 // with the reviewed ones. A variable changed in the dashboard stops the deploy; secrets
 // are checked by name only.
-const INTENDED_CHANGES = {staging: {EDITORIAL_ENABLED: '0'}}; // step 2 turns staging's editorial off
+// step 2 turns staging's editorial off; v5.1 raises the daily total from 1 to 5 on both.
+const INTENDED_CHANGES = {
+  staging: {EDITORIAL_ENABLED: '0', EDITORIAL_DAILY_USD: '5'},
+  production: {EDITORIAL_DAILY_USD: '5'},
+};
 function checkLiveSettings(name, env, localVars, secrets) {
   const live = liveVersion(name, env);
   const remoteVars = Object.fromEntries(live.bindings.filter(b => b.type === 'plain_text').map(b => [b.name, b.text]));
