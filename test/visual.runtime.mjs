@@ -5,11 +5,12 @@ import {get} from 'node:http';
 import WebSocket from 'ws';
 import miniflare from 'miniflare';
 import {png,jpg,imageArgs,letteringArgs,bindings,network} from './visual-fixtures.mjs';
+import {sha256,stable} from '../src/io.mjs';
 const {Miniflare,convertV4MiniflareOptions}=miniflare;
 async function runtime(options={}) {
   const net=network(options);
   const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script:await readFile(new URL('../.test-build/index.js',import.meta.url),'utf8'),compatibilityDate:'2026-11-17',cf:false,inspectorPort:0,
-    durableObjects:{EDITORIAL_JOBS:{className:'EditorialJob',useSQLite:true},EDITORIAL_BUDGET:{className:'EditorialBudget',useSQLite:true}},bindings:bindings(),outboundService:net.handler}));
+    durableObjects:{EDITORIAL_JOBS:{className:'EditorialJob',useSQLite:true},EDITORIAL_BUDGET:{className:'EditorialBudget',useSQLite:true}},bindings:{...bindings(),...options.bindings},outboundService:net.handler}));
   const call=async(args,name='review_illustration')=>(await(await mf.dispatchFetch('https://reviewer.test/mcp',{method:'POST',headers:{'x-api-key':'test-mcp-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})})).json()).result;
   return {mf,net,call};
 }
@@ -64,4 +65,77 @@ test('Cloudflare runtime: bounded JPEG decoder and subsequent upload remain belo
     const result=await r.call(imageArgs());assert.ok(!result.isError,JSON.stringify(result));await sample();
     assert.ok(peak<96*1024**2);t.diagnostic(`JPEG measured peak V8 heap + backing storage: ${(peak/1024**2).toFixed(2)} MiB (native runtime overhead excluded).`);
   }finally{clearInterval(timer);client?.close();await r.mf.dispose();}
+});
+
+function delay(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+const timingBindings={TEST_SHORT_DEADLINES:'1'};
+const budgetOf=result=>result.structuredContent.private_image_handling.budget;
+
+test('workerd admits a completed inference longer than the minimum when preparation is fast',async()=>{
+  const r=await runtime({bindings:timingBindings,handle:async(req,url)=>{
+    if(url.pathname==='/v1/responses')await delay(2200);
+  }});
+  try{
+    const result=await r.call(imageArgs());
+    assert.ok(!result.isError,JSON.stringify(result));assert.equal(budgetOf(result).settled_usd,0.01);
+    assert.equal(budgetOf(result).refunded_usd,0.29);assert.equal(r.net.inferences().length,1);
+    assert.equal(r.net.deletes().length,1);
+  }finally{await r.mf.dispose();}
+});
+
+test('workerd blocks slow preparation and cleans the upload before any paid submission',async()=>{
+  const r=await runtime({bindings:timingBindings,handle:async(req,url)=>{
+    if(url.pathname.endsWith('/input_tokens'))await delay(1750);
+  }});
+  try{
+    const result=await r.call(imageArgs());
+    assert.ok(result.isError);assert.equal(r.net.uploads(),1);assert.equal(r.net.deletes().length,1);
+    assert.equal(r.net.inferences().length,0);assert.equal(budgetOf(result).reserved_usd,0);
+  }finally{await r.mf.dispose();}
+});
+test('workerd rejects a late internal admission before preparation',async()=>{
+  const r=await runtime();
+  try{
+    const args=imageArgs(),name='review_illustration',id=await sha256('visual-v5.1:'+args.request_key);
+    const ns=await r.mf.getDurableObjectNamespace('EDITORIAL_JOBS');
+    const response=await ns.get(ns.idFromName(id)).fetch('https://editorial.internal/visual',{
+      method:'POST',body:JSON.stringify({name,args,id,fingerprint:await sha256(stable({name,args})),started_at:Date.now()-46_000})});
+    assert.match((await response.json()).content[0].text,/deadline expired before admission/);assert.equal(r.net.calls.length,0);
+  }finally{await r.mf.dispose();}
+});
+test('workerd inference timeout retains the reservation, deletes the upload and replays without a paid retry',async()=>{
+  const r=await runtime({bindings:timingBindings,handle:async(req,url)=>{
+    if(url.pathname==='/v1/responses')await delay(4200);
+  }});
+  try{
+    const result=await r.call(imageArgs());assert.ok(result.isError,JSON.stringify(result));
+    assert.equal(result.structuredContent.private_image_handling.attempt.status,'uncertain');
+    const b=budgetOf(result);assert.equal(b.refunded_usd,0);assert.equal(b.reservation_refunded,false);assert.equal(b.settled_usd,0.3);
+    assert.deepEqual(await r.call(imageArgs()),result);assert.equal(r.net.inferences().length,1);
+    assert.equal(r.net.deletes().length,1);
+  }finally{await r.mf.dispose();}
+});
+test('SQLite ledger shares configured five-dollar capacity and serializes competing releases and reservations',async()=>{
+  const r=await runtime({bindings:{EDITORIAL_DAILY_USD:'5',EDITORIAL_MAX_JOB_USD:'3'}});
+  try{
+    const ns=await r.mf.getDurableObjectNamespace('EDITORIAL_BUDGET');
+    const post=async(route,id,amount,fields={})=>ns.get(ns.idFromName('editorial-budget')).fetch('https://budget.internal/'+route,{
+      method:'POST',body:JSON.stringify({id:await sha256(id),amount,...fields})});
+    assert.equal((await post('reserve','whole-work',3.5)).status,200);
+    const blocked=await r.call(imageArgs({max_cost_usd:1.01}));
+    assert.ok(blocked.isError);assert.equal(r.net.calls.length,0);
+    const visual=await r.call(imageArgs({max_cost_usd:1}));assert.ok(!visual.isError,JSON.stringify(visual));
+    // Whole-work + settled visual = 3.51. Only one concurrent 1.00 hold fits.
+    const ids=['left','right'];const kind={kind:'visual-v5.1'};
+    const holds=await Promise.all(ids.map(id=>post('reserve',id,1,kind)));
+    assert.deepEqual(holds.map(x=>x.status).sort(),[200,409]);
+    const winner=ids[holds.findIndex(x=>x.ok)];
+    const release=()=>post('release',winner,1,{...kind,outcome:'completed',estimated_cost_usd:0.012});
+    const [first,second,contender]=await Promise.all([release(),release(),post('reserve','contender',1)]);
+    assert.deepEqual(await first.json(),await second.json());
+    if(!contender.ok)assert.equal((await post('reserve','contender',1)).status,200);
+    assert.equal((await post('reserve','last',0.47)).status,200);
+    assert.equal((await post('reserve','overflow',0.001)).status,409);
+    assert.equal(r.net.inferences().length,1);
+  }finally{await r.mf.dispose();}
 });

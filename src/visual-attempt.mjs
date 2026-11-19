@@ -1,3 +1,4 @@
+import {matchesSettlement} from './budget.mjs';
 import {json,sha256,stable,putLarge,getLarge,estimateCost} from './io.mjs';
 import {LIMITS,networkContext,visualAPI,boundedJSON} from './visual-limits.mjs';
 import {prepareImages} from './drive-images.mjs';
@@ -5,8 +6,37 @@ import {privateConfiguration,validateLegacy,normalizeLegacy,validateResponse} fr
 
 let occupied = false;
 const errorResult = message => ({isError:true,content:[{type:'text',text:message}]});
+// An internal request can finish in the ledger after its caller times out.
+// Bound the caller's wait too. The durable intent reconciles that ambiguity.
+async function budgetRequest(env,route,body,signal) {
+  signal.throwIfAborted();
+  let onAbort;
+  const aborted=new Promise((_,reject)=>{
+    onAbort=()=>reject(signal.reason);
+    signal.addEventListener('abort',onAbort,{once:true});
+  });
+  try {
+    const stub=env.EDITORIAL_BUDGET.get(env.EDITORIAL_BUDGET.idFromName('editorial-budget'));
+    const read=async()=>{
+      const response=await stub.fetch('https://budget.internal/'+route,{
+        method:'POST',signal,body:JSON.stringify(body)});
+      return {status:response.status,ok:response.ok,data:await boundedJSON(response,signal)};
+    };
+    return await Promise.race([read(),aborted]);
+  } finally {signal.removeEventListener('abort',onAbort);}
+}
+
 export class VisualAttempt {
-  constructor(ctx,env) { this.ctx=ctx;this.env=env; }
+  constructor(ctx,env,timing=LIMITS) { this.ctx=ctx;this.env=env;this.timing=timing; }
+  deadlines(start) {
+    const end=start+this.timing.totalMs;
+    const inferenceEnd=end-this.timing.cleanupMs;
+    const latestStart=Math.min(start+this.timing.prepareMs,inferenceEnd-this.timing.minInferenceMs);
+    return {end,inferenceEnd,latestStart};
+  }
+  ensureTime(latestStart) {
+    if(Date.now()>=latestStart) throw Error('Too little time remains for a private review. No inference started.');
+  }
   async save(record) { await this.ctx.storage.put('visual',record); }
   async fetch(request) {
     const {id,fingerprint,name,args,started_at}=await request.json();
@@ -16,30 +46,35 @@ export class VisualAttempt {
       record=await this.ctx.storage.get('visual');
       if(record) {
         if(record.fingerprint!==fingerprint) prior=errorResult('request_key was already used with different arguments. No new inference started.');
-        else if(record.finished_at&&Date.now()<record.finished_at+LIMITS.cacheMs) prior=await getLarge(this.ctx.storage,'visual-result');
+        else if(record.finished_at&&Date.now()<record.finished_at+LIMITS.cacheMs) {
+          const cached=await getLarge(this.ctx.storage,'visual-result');
+          prior=cached&&record.settlement_version?this.decorate(cached,record):cached;
+        }
         else prior=errorResult('This attempt is in progress, interrupted or its result expired. The request key cannot start another inference.');
         return;
       }
       if(occupied) {prior=errorResult('Private image preparation is busy. Retry this identical request later.');return;}
       occupied=true;claimed=true;this.running=true;
-      if(!Number.isSafeInteger(started_at)||started_at>Date.now()||started_at+LIMITS.totalMs<=Date.now()) {
+      if(!Number.isSafeInteger(started_at)||started_at>Date.now()||Date.now()>=this.deadlines(started_at).latestStart) {
         occupied=false;claimed=false;this.running=false;prior=errorResult('Private request deadline expired before admission.');return;
       }
       record={kind:'visual-v5.1',id,fingerprint,state:'preparing',created_at:started_at,files:[],unknown_upload:false,
-        cleanup_rounds:0,reserved_usd:0,estimated_cost_usd:null,api_calls:0};
+        settlement_version:1,cleanup_rounds:0,reserved_usd:0,estimated_cost_usd:null,api_calls:0};
       try {
         await this.ctx.storage.transaction(async tx=>{
           await tx.put('visual',record);
-          await tx.setAlarm(record.created_at+LIMITS.totalMs+1000);
+          await tx.setAlarm(this.deadlines(record.created_at).end+1000);
         });
       } catch(e) { occupied=false;this.running=false;claimed=false;throw e; }
     });
     if(!claimed) return json(prior??errorResult('Attempt is unavailable; no inference retried.'));
     let result; const counter={count:0};
+    const {end,inferenceEnd,latestStart}=this.deadlines(record.created_at);
     try {
       const {pricing}=privateConfiguration(this.env,args);
       const original=await validateLegacy(name,args,this.env);
-      const prepare=networkContext(record.created_at+LIMITS.prepareMs,counter);
+      this.ensureTime(latestStart);
+      const prepare=networkContext(latestStart,counter);
       const prepared=await prepareImages(this.env,args.images,prepare,{
         uploading:async()=>{record.unknown_upload=true;await this.save(record);},
         uploaded:async id=>{record.files.push(id);record.unknown_upload=false;await this.save(record);},
@@ -64,19 +99,23 @@ export class VisualAttempt {
       if(record.preflight_cost_usd>args.max_cost_usd) throw Error('Estimated inference cost exceeds max_cost_usd. No inference started.');
       await prepared.recheck();
       prepare.signal.throwIfAborted();
+      this.ensureTime(latestStart);
       record.authorized_usd=args.max_cost_usd;record.reservation_status='unknown';await this.save(record);
-      const reservation=await this.env.EDITORIAL_BUDGET.get(this.env.EDITORIAL_BUDGET.idFromName('editorial-budget')).fetch('https://budget.internal/reserve',{
-        method:'POST',body:JSON.stringify({id,amount:args.max_cost_usd,kind:'visual-v5.1'}),signal:prepare.signal});
-      const reserved=await reservation.json();
+      const reservation=await budgetRequest(this.env,'reserve',{id,amount:args.max_cost_usd,kind:record.kind},prepare.signal);
+      const reserved=reservation.data;
       if(!reservation.ok||reserved.reserved!==args.max_cost_usd) {
-        record.reservation_status=reservation.ok?'unknown':'rejected';
+        record.reservation_status=reservation.status===409?'rejected':'unknown';
         throw Error('Shared daily budget rejected the full authorized reservation. No inference started.');
       }
       record.reserved_usd=reserved.reserved;record.reservation_status='reserved';
       prepare.signal.throwIfAborted();
+      this.ensureTime(latestStart);
       // Persist BEFORE the only paid call. Recovery never runs this code again.
       record.state='submitting';record.api_calls=1;await this.save(record);
-      const inference=networkContext(Math.min(Date.now()+LIMITS.inferenceMs,record.created_at+LIMITS.totalMs-LIMITS.cleanupMs),counter);
+      // Early preparation leaves up to 110 seconds for inference. A delayed
+      // durable write must not dispatch a request with an exhausted deadline.
+      this.ensureTime(latestStart);
+      const inference=networkContext(inferenceEnd,counter);
       const response=await visualAPI(this.env,inference,'/responses',{method:'POST',headers:{'Content-Type':'application/json','X-Client-Request-Id':id},body:JSON.stringify(payload)});
       const usage=validateResponse(response,payload);
       record.estimated_cost_usd=estimateCost(usage.input_tokens,usage.output_tokens,pricing);
@@ -89,25 +128,79 @@ export class VisualAttempt {
       result=errorResult(e?.name==='TimeoutError'||e?.name==='AbortError'?'Private review deadline exceeded; no inference retry.':e.message);
     } finally {
       try {
-        await this.cleanup(record,Math.min(Date.now()+LIMITS.cleanupMs,record.created_at+LIMITS.totalMs),counter);
-        record.finished_at=Date.now();
-        result=this.decorate(result??errorResult('Review interrupted; no inference retry.'),record);
-        await putLarge(this.ctx.storage,'visual-result',result);
-        await this.save(record);
-        await this.ctx.storage.setAlarm(record.files.length?Date.now()+30_000:record.finished_at+LIMITS.cacheMs);
+        const deadline=Math.min(end,Date.now()+this.timing.cleanupMs);
+        await this.finish(record,result??errorResult('Review interrupted; no inference retry.'));
+        await this.reconcile(record,deadline,counter);
+        result=this.decorate(result,record);
       } finally {occupied=false;this.running=false;}
     }
     return json(result);
+  }
+  async finish(record,result) {
+    record.finished_at=Date.now();
+    if(['reserved','unknown'].includes(record.reservation_status)) {
+      const beforeSubmission=record.api_calls===0&&['failed','interrupted'].includes(record.state);
+      const outcome=record.state==='completed'?'completed':beforeSubmission?'unsubmitted':'uncertain';
+      record.settlement={outcome,status:'pending',attempts:0};
+    }
+    // Commit the review and settlement intent together. A restart after this
+    // transaction can replay the receipt request without losing the verdict.
+    await this.ctx.storage.transaction(async tx=>{
+      await putLarge(tx,'visual-result',result);
+      await tx.put('visual',record);
+      await tx.setAlarm(Date.now()+30_000);
+    });
+  }
+  async settle(record,deadline) {
+    const intent=record.settlement;
+    if(intent?.status!=='pending'||Date.now()>=deadline) return;
+    intent.attempts++;
+    try {
+      const signal=AbortSignal.timeout(Math.max(1,deadline-Date.now()));
+      const amount=record.authorized_usd??record.reserved_usd;
+      const {ok,data:receipt}=await budgetRequest(this.env,'release',{
+        id:record.id,kind:record.kind,amount,outcome:intent.outcome,estimated_cost_usd:record.estimated_cost_usd
+      },signal);
+      if(!ok)return;
+      if(!matchesSettlement(receipt,record.id,amount,intent.outcome,record.estimated_cost_usd))return;
+      Object.assign(intent,receipt);
+      record.reserved_usd=receipt.reserved;
+      record.reservation_status=receipt.status==='not_reserved'?'not_reserved':'reserved';
+    } catch { /* Keep the persisted intent pending until a receipt is confirmed. */ }
+  }
+  async reconcile(record,deadline,counter) {
+    // Share the cleanup allowance. Limit ledger I/O to half so file deletion
+    // still has a window when the budget object is slow.
+    await this.settle(record,Math.min(deadline,Date.now()+Math.floor(this.timing.cleanupMs/2)));
+    if(record.files.length&&record.cleanup_rounds<4) await this.cleanup(record,deadline,counter);
+    const expires=record.finished_at+LIMITS.cacheMs;
+    if(Date.now()>=expires&&record.state!=='expired') {
+      const count=await this.ctx.storage.get('visual-result:count');
+      if(count!=null) await this.ctx.storage.delete(['visual-result:count',...Array.from({length:count},(_,i)=>'visual-result:'+i)]);
+      delete record.sources;record.files=[];record.state='expired';
+    }
+    let next=record.state==='expired'?Infinity:expires;
+    if(record.files.length&&record.cleanup_rounds<4) next=Math.min(next,Date.now()+30_000);
+    if(record.settlement?.status==='pending') {
+      const delay=Math.min(3600_000,30_000*2**Math.min(7,record.settlement.attempts));
+      next=Math.min(next,Date.now()+delay);
+    }
+    await this.ctx.storage.transaction(async tx=>{
+      await tx.put('visual',record);
+      if(Number.isFinite(next))await tx.setAlarm(next);
+    });
   }
   decorate(result,record) {
     const handling={sources:record.sources??[],attempt:{id:record.id,status:record.state,api_calls:record.api_calls},
       budget:{reserved_usd:record.reserved_usd,authorized_usd:record.authorized_usd??null,reservation_status:record.reservation_status??'not_requested',preflight_cost_usd:record.preflight_cost_usd??null,
         estimated_cost_usd:record.estimated_cost_usd,input_token_ceiling:record.input_token_ceiling??null,
-        reservation_refunded:false},cleanup:{pending_file_ids:record.files,unknown_upload:record.unknown_upload,
+        settlement_status:record.settlement?.status??'not_applicable',settled_usd:record.settlement?.settled_usd??null,
+        refunded_usd:record.settlement?.refunded_usd??0,budget_day:record.settlement?.day??null,
+        reservation_refunded:record.settlement?.status==='confirmed'&&record.settlement.refunded_usd>0},cleanup:{pending_file_ids:record.files,unknown_upload:record.unknown_upload,
         expiry_seconds:86400,attempts:record.cleanup_rounds},
       limitations:['No resizing or re-encoding. Model-side image dimensions are not reported.',
         'Legacy editorial rules and verdict reconciliation are unchanged. Reservations are estimates, not a billing cap.']};
-    const suffix=`\n\nPrivate image handling: ${record.state}; authorized reservation $${record.reserved_usd}; ${record.files.length} pending deletions${record.unknown_upload?'; upload outcome unknown, expiry fallback requested':''}.`;
+    const suffix=`\n\nPrivate image handling: ${record.state}; authorized reservation $${record.reserved_usd}; confirmed release $${handling.budget.refunded_usd} (${handling.budget.settlement_status}); ${record.files.length} pending deletions${record.unknown_upload?'; upload outcome unknown, expiry fallback requested':''}.`;
     return {...result,content:[...(result.structuredContent?.private_image_handling?result.content.slice(0,-1):result.content??[]),{type:'text',text:suffix}],
       structuredContent:{...result.structuredContent,private_image_handling:handling}};
   }
@@ -122,29 +215,20 @@ export class VisualAttempt {
         if(r.status===404||r.status===204)await r.body?.cancel();
         else if((await boundedJSON(r,context.signal)).deleted!==true)continue;
         record.files=record.files.filter(x=>x!==id);await this.save(record);
-      } catch { /* Only deletion is eligible for bounded recovery. */ }
+      } catch { /* Keep the ID for another deletion attempt. */ }
     }
   }
   async alarm() {
     if(this.running){await this.ctx.storage.setAlarm(Date.now()+1000);return;}
     const record=await this.ctx.storage.get('visual');if(!record)return;
-    if(!record.finished_at&&Date.now()<record.created_at+LIMITS.totalMs) {
-      await this.ctx.storage.setAlarm(record.created_at+LIMITS.totalMs+1000);return;
+    if(!record.finished_at&&Date.now()<this.deadlines(record.created_at).end) {
+      await this.ctx.storage.setAlarm(this.deadlines(record.created_at).end+1000);return;
     }
     if(!record.finished_at) {
-      record.state=record.state==='submitting'?'uncertain':'interrupted';record.finished_at=Date.now();
-      await putLarge(this.ctx.storage,'visual-result',errorResult('Attempt interrupted; no inference was resubmitted.'));
+      record.state=record.api_calls||record.state==='submitting'?'uncertain':'interrupted';
+      record.settlement_version=1;
+      await this.finish(record,errorResult('Attempt interrupted; no inference was resubmitted.'));
     }
-    if(record.files.length&&record.cleanup_rounds<4) await this.cleanup(record,Date.now()+LIMITS.cleanupMs);
-    if(Date.now()>=record.finished_at+LIMITS.cacheMs) {
-      const count=await this.ctx.storage.get('visual-result:count');
-      if(count!=null) await this.ctx.storage.delete(['visual-result:count',...Array.from({length:count},(_,i)=>`visual-result:${i}`)]);
-      // Keep the identity tombstone, not source names or review text, indefinitely.
-      delete record.sources;record.files=[];record.state='expired';await this.save(record);return;
-    }
-    const result=await getLarge(this.ctx.storage,'visual-result');
-    if(result) await putLarge(this.ctx.storage,'visual-result',this.decorate(result,record));
-    await this.save(record);
-    await this.ctx.storage.setAlarm(record.files.length&&record.cleanup_rounds<4?Date.now()+30_000:record.finished_at+LIMITS.cacheMs);
+    await this.reconcile(record,Date.now()+this.timing.cleanupMs);
   }
 }

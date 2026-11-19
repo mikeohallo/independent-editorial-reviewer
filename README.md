@@ -30,7 +30,7 @@ Claude ──OAuth 2.1──▶ Worker (/mcp) ──▶ OpenAI
 
 - **Sign-in:** claude.ai connects with OAuth 2.1 (dynamic client registration, PKCE) through `@cloudflare/workers-oauth-provider`. The consent page sits behind Cloudflare Access, and the Worker checks the Access token itself (signature, audience, issuer, expiry and the one allowed email).
 - **One door:** after the OAuth check, the request goes to the reviewer with its inner key set server-side, so callers never hold it. Only `/mcp`, `/health` and the OAuth endpoints exist; there's no `workers.dev` address.
-- **Money:** whole-work reviews reserve an estimated cost against a per-job and daily cap before they start. Private Drive image calls also reserve their full authorization against the shared daily cap. Legacy text and URL/data-image calls remain outside that limiter (a known gap).
+- **Money:** whole-work reviews reserve an estimated cost against a per-job and daily cap before they start. Private Drive image calls reserve their full authorization against the same configured daily cap. Completion with verified usage releases the unused amount after rounding cost up to a cent. An uncertain paid submission retains the full reservation. Legacy text and URL/data-image calls remain outside that limiter (a known gap).
 - **Sources:** the Worker reads only files explicitly passed by ID, and only from approved Drive folders, checked by parent before download. Reports are written to their own folder and refused as inputs.
 
 ## Built and shipped

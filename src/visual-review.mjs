@@ -21,7 +21,7 @@ export function extendVisualSchema(tool) {
   item.required=item.required.filter(x=>x!=='image_url');
   item.oneOf=[{required:['image_url'],not:{required:['drive_file_id']}},{required:['drive_file_id'],not:{required:['image_url']}}];
   schema.properties.request_key={type:'string',minLength:8,maxLength:128,description:'Required for Drive images. Reuse only for the identical request; failed or interrupted attempts are not restarted.'};
-  schema.properties.max_cost_usd={type:'number',exclusiveMinimum:0,maximum:1,description:'Required for Drive images. Full authorized amount is permanently reserved against the shared daily cap.'};
+  schema.properties.max_cost_usd={type:'number',exclusiveMinimum:0,maximum:1,description:'Required for Drive images. Reserves the full authorization against the configured daily cap. Verified completion releases unused capacity after rounding cost up to a cent. An uncertain submission retains the full amount.'};
   schema.allOf=[{if:{properties:{images:{contains:{required:['drive_file_id']}}}},then:{required:['request_key','max_cost_usd'],properties:{images:{items:{required:['drive_file_id']}}}}}];
   return result;
 }

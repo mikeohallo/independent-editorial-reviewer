@@ -95,7 +95,7 @@ test('aggregate metadata bytes reject before media',async t=>{
 });
 test('duplicate key replays identical success without any network or reservation',async t=>{const {env,net}=setup(t);const r=await call(env),count=net.calls.length;assert.deepEqual(await call(env),r);assert.equal(net.calls.length,count);assert.equal(net.inferences().length,1);});
 test('key fingerprint includes tool and all arguments',async t=>{const {env,net}=setup(t);await call(env);assert.match(message(await call(env,imageArgs({brief:'Different'}))),/different arguments/);assert.equal(net.inferences().length,1);});
-test('shared budget permanently reserves full authorized amount, also against existing jobs',async t=>{
+test('shared budget checks the full requested authorization against existing jobs',async t=>{
   const {env,net,budget}=setup(t);await budget.fetch(new Request('https://budget.internal/reserve',{method:'POST',body:JSON.stringify({id:'a'.repeat(64),amount:0.8})}));
   const r=await call(env);assert.match(message(r),/daily budget/);assert.equal(net.inferences().length,0);assert.equal(net.deletes().length,1);
 });
@@ -118,12 +118,24 @@ test('cleanup failure is durable and alarm retries deletions only',async t=>{
   const r=await call(env);assert.equal(r.structuredContent.private_image_handling.cleanup.pending_file_ids.length,1);
   fail=false;await [...jobs.values()][0].alarm();const replay=await call(env);assert.equal(replay.structuredContent.private_image_handling.cleanup.pending_file_ids.length,0);assert.equal(net.inferences().length,1);
 });
-test('restart in submitting state runs cleanup only and preserves tombstone after expiry',async t=>{
-  const {env,net,jobs}=setup(t);await call(env);const job=[...jobs.values()][0],record=await job.ctx.storage.get('visual');
-  record.state='submitting';delete record.finished_at;record.created_at=0;record.files=['file_test_1'];await job.ctx.storage.put('visual',record);
-  const restarted=new EditorialJobCore(job.ctx,env);await restarted.alarm();assert.equal((await job.ctx.storage.get('visual')).state,'uncertain');assert.equal(net.inferences().length,1);
-  const done=await job.ctx.storage.get('visual');done.finished_at=1;await job.ctx.storage.put('visual',done);await restarted.alarm();
-  assert.equal(await getLarge(job.ctx.storage,'visual-result'),null);assert.equal((await job.ctx.storage.get('visual')).state,'expired');assert.equal((await call(env)).isError,true);assert.equal(net.inferences().length,1);
+test('a durable submitting marker survives restart and expiry without refund or paid retry',async t=>{
+  const {env,net,budget,jobs}=setup(t);
+  const args=imageArgs(),name='review_illustration',id=await sha256('visual-v5.1:'+args.request_key);
+  await ledgerCall(budget,'reserve',{id,kind:'visual-v5.1',amount:args.max_cost_usd});
+  const restarted=new EditorialJobCore(context(),env);jobs.set(id,restarted);
+  await restarted.ctx.storage.put('visual',{id,kind:'visual-v5.1',fingerprint:await sha256(stable({name,args})),
+    state:'submitting',api_calls:1,created_at:0,files:['file_test_1'],cleanup_rounds:0,
+    reservation_status:'reserved',reserved_usd:args.max_cost_usd,authorized_usd:args.max_cost_usd});
+  await restarted.alarm();
+  const result=await call(env,args),receipt=reviewBudget(result);
+  assert.equal(result.structuredContent.private_image_handling.attempt.status,'uncertain');
+  assert.equal(receipt.settled_usd,args.max_cost_usd);assert.equal(receipt.refunded_usd,0);
+  assert.equal(net.deletes().length,1);
+  const done=await restarted.ctx.storage.get('visual');done.finished_at=1;
+  await restarted.ctx.storage.put('visual',done);await restarted.alarm();
+  assert.equal(await getLarge(restarted.ctx.storage,'visual-result'),null);
+  assert.equal((await restarted.ctx.storage.get('visual')).state,'expired');
+  assert.equal((await call(env,args)).isError,true);assert.equal(net.inferences().length,0);
 });
 test('redirects are rejected without following or forwarding credentials',async t=>{const {env,net}=setup(t,{handle:async(r,u)=>u.searchParams.has('alt')?new Response(null,{status:302,headers:{location:'https://other.example.com/image'}}):null});assert.equal((await call(env)).isError,true);assert.equal(net.inferences().length,0);assert.ok(net.calls.every(x=>!x.url.hostname.includes('other.')));});
 test('streamed oversize and stalled bodies cancel the reader',async()=>{
@@ -195,4 +207,119 @@ test('a stalled media body hits the preparation deadline without inference',asyn
 test('a deletion response without confirmation remains pending',async t=>{
   const {env}=setup(t,{handle:async r=>r.method==='DELETE'?Response.json({deleted:false}):null});
   const result=await call(env);assert.equal(result.structuredContent.private_image_handling.cleanup.pending_file_ids.length,1);
+});
+
+const reviewBudget = result => result.structuredContent.private_image_handling.budget;
+const ledgerCall = (budget,route,body) => budget.fetch(new Request('https://budget.internal/'+route,{
+  method:'POST',body:JSON.stringify(body)}));
+
+test('settlement uses the original UTC day and immutable receipts across midnight',async t=>{
+  const {budget}=environment();
+  t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-01-01T23:59:55Z')});
+  const a={id:'a'.repeat(64),kind:'visual-v5.1',amount:0.8};
+  await ledgerCall(budget,'reserve',a);
+  t.mock.timers.tick(10_000);
+  await ledgerCall(budget,'reserve',{...a,id:'b'.repeat(64),amount:1});
+  const completed={...a,outcome:'completed',estimated_cost_usd:0.010001};
+  const receipt=await (await ledgerCall(budget,'release',completed)).json();
+  assert.deepEqual(receipt,{id:a.id,status:'confirmed',day:'2026-01-01',reserved:0.8,settled_usd:0.02,refunded_usd:0.78});
+  assert.deepEqual(await (await ledgerCall(budget,'release',completed)).json(),receipt);
+  assert.equal((await ledgerCall(budget,'release',{...a,outcome:'unsubmitted'})).status,409);
+  assert.equal(await budget.ctx.storage.get('day:2026-01-01'),0.02);
+  assert.equal(await budget.ctx.storage.get('day:2026-01-02'),1);
+});
+
+test('settlement caps upward rounding at authorization and leaves exact cents alone',async()=>{
+  const {budget}=environment();
+  for(const [i,amount,cost,settled] of [[1,0.315,0.313,0.315],[2,0.3,0.07,0.07],[3,0.3,0,0]]){
+    const body={kind:'visual-v5.1',id:String(i).repeat(64),amount};
+    await ledgerCall(budget,'reserve',body);
+    const receipt=await(await ledgerCall(budget,'release',{...body,outcome:'completed',estimated_cost_usd:cost})).json();
+    assert.equal(receipt.settled_usd,settled);
+  }
+});
+test('numeric-only reservations retain their full debit and cannot credit a guessed day',async()=>{
+  const {budget}=environment(),body={id:'f'.repeat(64),amount:0.8,kind:'visual-v5.1'};
+  await budget.ctx.storage.put('job:'+body.id,0.8);
+  assert.equal((await(await ledgerCall(budget,'reserve',body)).json()).reserved,0.8);
+  const receipt=await(await ledgerCall(budget,'release',{...body,outcome:'unsubmitted'})).json();
+  assert.equal(receipt.status,'legacy_retained');assert.equal(receipt.refunded_usd,0);
+  assert.equal(budget.ctx.storage.data.size,1);
+});
+test('pre-submission recovery prevents a delayed reserve from charging a closed ID',async()=>{
+  const {budget}=environment(),body={id:'d'.repeat(64),amount:1,kind:'visual-v5.1',outcome:'unsubmitted'};
+  const receipt=await(await ledgerCall(budget,'release',body)).json();
+  assert.equal(receipt.status,'not_reserved');assert.equal(receipt.refunded_usd,0);
+  assert.equal((await ledgerCall(budget,'reserve',body)).status,409);
+});
+test('lost reserve acknowledgement is reconciled as a full pre-submission release',async t=>{
+  const {env,net,budget}=setup(t);
+  env.EDITORIAL_BUDGET.get=()=>({fetch:async(url,init)=>{
+    const response=await budget.fetch(new Request(url,init));
+    if(url.endsWith('/reserve'))throw Error('Lost reserve acknowledgement');
+    return response;
+  }});
+  const r=await call(env),b=reviewBudget(r);
+  assert.ok(r.isError);assert.equal(b.reservation_refunded,true);assert.equal(b.settled_usd,0);
+  assert.equal(b.refunded_usd,0.3);assert.equal(net.inferences().length,0);
+});
+test('lost settlement response reports pending until restart confirms the same credit',async t=>{
+  const {env,net,budget,jobs}=setup(t);let lose=true;
+  env.EDITORIAL_BUDGET.get=()=>({fetch:async(url,init)=>{
+    const response=await budget.fetch(new Request(url,init));
+    if(lose&&url.endsWith('/release'))throw Error('Lost release acknowledgement');
+    return response;
+  }});
+  const result=await call(env),pending=reviewBudget(result);
+  assert.ok(!result.isError);assert.equal(pending.settlement_status,'pending');
+  assert.equal(pending.reservation_refunded,false);assert.equal(pending.refunded_usd,0);assert.equal(pending.settled_usd,null);
+  lose=false;const [job]=jobs.values();const resumed=new EditorialJobCore(job.ctx,env);
+  await resumed.alarm();await resumed.alarm();
+  const receipt=reviewBudget(await call(env));
+  assert.equal(receipt.settlement_status,'confirmed');assert.equal(receipt.refunded_usd,0.29);
+  assert.equal(receipt.reservation_refunded,true);assert.equal(receipt.settled_usd,0.01);
+  assert.equal(await budget.ctx.storage.get('day:'+receipt.budget_day),0.01);assert.equal(net.inferences().length,1);
+});
+test('restart after reservation and before paid submission releases all capacity',async t=>{
+  const {env,net,budget,jobs}=setup(t);
+  const args=imageArgs(),id=await sha256('visual-v5.1:'+args.request_key);
+  await ledgerCall(budget,'reserve',{id,kind:'visual-v5.1',amount:args.max_cost_usd});
+  const job=new EditorialJobCore(context(),env);jobs.set(id,job);
+  await job.ctx.storage.put('visual',{id,fingerprint:await sha256(stable({name:'review_illustration',args})),
+    kind:'visual-v5.1',state:'preparing',api_calls:0,created_at:0,files:[],cleanup_rounds:0,
+    reservation_status:'unknown',reserved_usd:0,authorized_usd:args.max_cost_usd});
+  await job.alarm();const b=reviewBudget(await call(env,args));
+  assert.equal(b.refunded_usd,args.max_cost_usd);assert.equal(b.settled_usd,0);assert.equal(net.inferences().length,0);
+});
+test('untrustworthy usage retains the full paid reservation on replay',async t=>{
+  const {env,net}=setup(t,{response:p=>({...responseFor(p),usage:null})});
+  const r=await call(env),b=reviewBudget(r);assert.ok(r.isError);assert.equal(b.settled_usd,0.3);
+  assert.equal(b.reservation_refunded,false);assert.equal(b.refunded_usd,0);
+  assert.deepEqual(await call(env),r);assert.equal(net.inferences().length,1);
+});
+test('confirmed reservation is fully returned when its acknowledgement arrives too late to submit',async t=>{
+  const {env,net,budget}=setup(t);
+  env.EDITORIAL_BUDGET.get=()=>({fetch:async(url,init)=>{
+    const response=await budget.fetch(new Request(url,init));
+    if(url.endsWith('/reserve')){
+      const now=Date.now.bind(Date);
+      t.mock.method(Date,'now',()=>now()+LIMITS.prepareMs+1);
+    }
+    return response;
+  }});
+  const r=await call(env),b=reviewBudget(r);
+  assert.match(message(r),/Too little time/);assert.equal(b.reservation_status,'reserved');
+  assert.equal(b.refunded_usd,0.3);assert.equal(b.settled_usd,0);assert.equal(b.reservation_refunded,true);
+  assert.equal(net.inferences().length,0);assert.equal(net.deletes().length,1);
+});
+test('a mismatched ledger receipt cannot confirm a refund',async t=>{
+  const {env,budget}=setup(t);
+  env.EDITORIAL_BUDGET.get=()=>({fetch:async(url,init)=>{
+    const response=await budget.fetch(new Request(url,init));
+    if(url.endsWith('/release')) return Response.json({...await response.json(),refunded_usd:0.3});
+    return response;
+  }});
+  const budgetResult=reviewBudget(await call(env));
+  assert.equal(budgetResult.settlement_status,'pending');assert.equal(budgetResult.reservation_refunded,false);
+  assert.equal(budgetResult.refunded_usd,0);assert.equal(budgetResult.settled_usd,null);
 });

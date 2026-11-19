@@ -81,21 +81,7 @@ export default {
   }
 };
 
-export class EditorialBudgetCore {
-  constructor(ctx,env){this.ctx=ctx;this.env=env;}
-  async fetch(request){
-    const {id,amount,kind}=await request.json();
-    if(!/^[a-f0-9]{64}$/.test(id)||!Number.isFinite(amount)||amount<=0)return json({error:'Invalid budget reservation'},400);
-    const day=new Date().toISOString().slice(0,10),limit=kind==='visual-v5.1'?Math.min(1,Number(this.env.EDITORIAL_DAILY_USD||1)):Number(this.env.EDITORIAL_DAILY_USD||10);
-    if(!Number.isFinite(limit)||limit<=0)return json({error:'Invalid daily budget configuration'},400);
-    return this.ctx.storage.transaction(async tx=>{
-      const prior=await tx.get(`job:${id}`);if(prior!=null)return json({reserved:prior});
-      const spent=await tx.get(`day:${day}`)||0;
-      if(spent+amount>limit)return json({error:`Daily editorial budget reservation limit ($${limit}) reached. No inference started.`},409);
-      await tx.put({[`job:${id}`]:amount,[`day:${day}`]:spent+amount});return json({reserved:amount});
-    });
-  }
-}
+export {EditorialBudgetCore} from './budget.mjs';
 
 export class EditorialJobCore {
   constructor(ctx,env){this.ctx=ctx;this.env=env;this.running=false;this.visual=new VisualAttempt(ctx,env);}

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.4",
+    "big.js": "7.0.1",
     "jpeg-js": "0.4.4"
   }
 }

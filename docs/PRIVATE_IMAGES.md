@@ -40,7 +40,7 @@ URL/data-image requests continue through the original engine, including its form
 | Embedded image metadata | 256 KiB |
 | External subrequests | 200 across preparation, inference and immediate cleanup |
 | Admission | One private review per Worker isolate at a time; no waiting queue |
-| Time budget | 120 seconds: up to 45 preparation, 65 inference, 10 cleanup |
+| Time budget | 120 seconds from ingress. Up to 45 for admission and preparation, 65–110 available for inference, final 10 for cleanup and settlement |
 
 These are upper bounds, not a guarantee every file below them is accepted. In particular, JPEG coefficient storage can exceed the decoder budget below the pixel limit; such files are rejected before decoding. PNG validation checks CRCs, chunk ordering, legal color/depth combinations, decompression, scanline filters, palette indices and interlaced passes. Inflater writes are bounded. JPEG validation checks structure, dimensions, sampling, EXIF orientation and bounded non-tolerant decoding with pinned `jpeg-js` 0.4.4. Animated PNG and unsupported encodings are rejected.
 
@@ -50,7 +50,19 @@ Images are processed sequentially and multipart uploads stream bounded chunks wi
 
 The resolved vision model is `OPENAI_VISION_MODEL`, then `OPENAI_MODEL`, then `gpt-6.1-sol`. It must match the model validated by `priceConfig` and any configured pricing override. The built-in conservative rates remain USD 5 per million input tokens and USD 10 per million output tokens. Token counting uses the actual file-backed input, instructions and output schema. The input ceiling is `ceil(count × 1.1) + 5000`, at most 200,000. Output limits remain 7,000 for illustration and 8,000 for lettering. A count failure or estimated cost above authorization blocks inference.
 
-After preflight, the existing shared budget object reserves the **entire** `max_cost_usd`, with a maximum private per-call and daily allowance of USD 1, or lower configured limits. Reservations share the existing UTC-day ledger with whole-work reviews. Unused capacity is not refunded. A reservation followed by an interruption can consume the allowance without producing a review. An ambiguous reservation response is reported as unknown. This is conservative admission control, not a guarantee about provider billing.
+After preflight, the shared budget object reserves the entire `max_cost_usd`. A private call can authorize up to the smaller of USD 1 and `EDITORIAL_MAX_JOB_USD`. Visual and whole-work reviews both use the configured `EDITORIAL_DAILY_USD`. The release owner manages that value separately.
+
+| Visual outcome | Amount retained on the original UTC budget day |
+| --- | --- |
+| Completed review with validated usage | Estimated cost rounded **up** to a cent, capped at the original reservation |
+| Failure confirmed before submission | Zero |
+| Interrupted after the submission marker, timed out during inference, or usage unverifiable | Full authorization |
+
+For example, a USD 0.30 authorization and a validated estimate of USD 0.012 retain USD 0.02 and release USD 0.28. The ledger stores an immutable receipt in the same transaction as the day-total adjustment. If a reserve or release acknowledgement is lost, the attempt reports uncertainty and recovers by ID. A pre-submission cancellation arriving before its reservation closes the ID so a late reserve cannot charge it. Numeric-only historical reservations retain their debit because they carry no original day. Whole-work jobs retain their current reservation behavior pending [issue #4](https://github.com/mikeohallo/independent-editorial-reviewer/issues/4).
+
+The budget fields distinguish the authorization, original reservation, conservative usage estimate, settled amount, confirmed refund and original budget day. While `settlement_status` is `pending`, the confirmed refund is zero and the settled amount is unknown. `reservation_refunded` becomes true only on a confirmed positive credit. Receipts govern admission capacity. Actual provider billing needs separate validation.
+
+The worker checks elapsed time from request ingress at admission, during preparation and around the durable submission marker. It requires at least 65 seconds available for inference plus the final 10 seconds for cleanup. Inference inherits unused preparation time up to the absolute deadline at ingress plus 110 seconds. For example, 12 seconds of preparation leave approximately 98 seconds for inference. A late request fails before paid dispatch. Once marked submitting, any ambiguous outcome retains the reservation. These limits need live latency validation.
 
 A separately tagged record in the existing jobs namespace binds the request key to the tool and all arguments. Completed identical requests replay the cached result for 24 hours. Changed arguments reject the key. In-progress, interrupted, uncertain and expired attempts never start another inference. A busy rejection before claiming a key can be retried with the same request. Do not create a new key just to poll or recover a lost response. After cache expiry, a minimal identity tombstone remains indefinitely. Whole-work job records are unaffected.
 
@@ -60,7 +72,7 @@ The `submitting` state is durable before the single paid POST. There is no autom
 
 OpenAI Files receives the original bytes with purpose `user_data` and requested expiry of 24 hours. The Responses request uses `input_image.file_id`, `detail: original`, `store: false`, `background: false`, default service tier and disabled truncation. Server-only placeholder URLs used to construct the legacy payload never reach OpenAI.
 
-Known uploaded file IDs are persisted immediately and deletion is attempted on success and failure. Up to three further alarm rounds retry **deletions only**. A lost upload response has no recoverable ID; requested expiry is the fallback. Cleanup status is durable and appears in replayed results. Normal cache expiry removes review text and source metadata, retaining the request identity tombstone. These controls do not override OpenAI's own data retention policies.
+Known uploaded file IDs are persisted immediately and deletion is attempted on success and failure. Up to three further alarm rounds retry file deletion. The same alarm reconciles pending settlement receipts with backoff up to one hour. An outstanding receipt can be recovered after review-cache expiry. A lost upload response has no recoverable ID; requested expiry is the fallback. Cleanup status is durable and appears in replayed results. Normal cache expiry removes review text and source metadata, retaining the request identity tombstone. These controls do not override OpenAI's own data retention policies.
 
 Existing review fields are preserved, with additive `structuredContent.private_image_handling` containing provenance, attempt status, conservative cost accounting, cleanup status and limitations. Legacy `usage` pricing remains the legacy presentation; use the additive budget fields for the new conservative estimate. Legacy service-version fields identify the unchanged engine; application discovery and health identify v5.1.
 

@@ -82,4 +82,6 @@ The private image path uses the existing jobs and budget bindings. No new route,
 
 The generated legacy transport module is checked in. The clean `npm ci --ignore-scripts` install does not regenerate source. `npm test` checks its exact regeneration and protected-source hash. The existing runtime entry point also imports private-image and memory tests, so the release script runs them without changing its command list.
 
-See [PRIVATE_IMAGES.md](PRIVATE_IMAGES.md) for limits, permanent daily reservations, synchronous timeout behavior, cleanup recovery and the synthetic live acceptance checks still required. No v5.1 live checks or deployment were performed during implementation.
+See [PRIVATE_IMAGES.md](PRIVATE_IMAGES.md) for limits, original-day reservation settlement, synchronous timeout behavior, cleanup recovery and the synthetic live acceptance checks still required. No v5.1 live checks or deployment were performed during implementation.
+
+The release owner manages the shared daily amount separately through the existing settings guard. Review tests exercise a synthetic USD 5 daily limit and the USD 1 private per-call maximum.

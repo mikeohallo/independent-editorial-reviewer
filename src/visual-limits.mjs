@@ -1,7 +1,7 @@
 export const LIMITS = Object.freeze({fileBytes: 20 * 1024 ** 2, totalBytes: 30 * 1024 ** 2,
   pixels: 8_000_000, totalPixels: 16_000_000, side: 4096, jsonBytes: 256 * 1024,
   decoderMiB: 48, subrequests: 200, totalMs: 120_000, prepareMs: 45_000,
-  inferenceMs: 65_000, cleanupMs: 10_000, cacheMs: 24 * 60 * 60 * 1000});
+  minInferenceMs: 65_000, cleanupMs: 10_000, cacheMs: 24 * 60 * 60 * 1000});
 
 // Deadlines cover response bodies as well as response headers. Cancelling also
 // releases the upstream stream when a peer ignores AbortSignal after headers.

@@ -12,6 +12,14 @@ Source candidate `5.1.0-candidate.1`, 18 November 2026. v5.1 has not been deploy
   - the login end to end with the real bundle: public `/health` only; `/mcp` 401 with the OAuth challenge, and the inner key alone refused; discovery and registration; the sign-in page refusing a missing, wrong-address, wrong-app, wrong-team, expired, unknown-key or forged Access token; consent with `form-action` naming claude.ai; Allow once only; PKCE token exchange; `tools/list` through the bridge with a wrong caller key overwritten; the free `get_editorial_review` "not found" check; the reviewer's own Origin check still applied.
 - `test/browser/consent_browser.py`: Allow clicked in a real Chromium reaches claude.ai's return address with a code (every other host blocked, so nothing reaches the real claude.ai); no horizontal scroll at 390px or 1366px, light and dark.
 
+## Release-review verification (20 November 2026)
+
+On Node 22.23.5, `npm ci` succeeded, all 154 unit tests passed and all 10 runtime tests passed. Both suites reported zero skips. The public-repository check passed locally. GitHub CI supplies the private-name and secret scans and the browser consent check.
+
+Settlement tests cover fractional cents, full pre-submission release, retention after an uncertain paid submission, repeated release, delayed reservation, loss or mismatch of settlement acknowledgements, restarts, original-day credits across midnight and historical numeric records. Workerd tests exercise a shared USD 5 test ledger with competing reservations and releases, while protecting the USD 1 private per-call limit. Accelerated offline deadlines exercise slow preparation, late admission, successful inference beyond the former fixed allocation, timeout, cleanup and replay.
+
+The latest workerd run measured 60.73 MiB for the six-image batch and 46.97 MiB for JPEG validation and upload. The 96 MiB check samples V8 heap and backing storage. Production latency, provider charges and native isolate overhead still need live validation.
+
 ## v5.1 local evidence (19 November 2026)
 
 - Node 22.23.5; `npm ci` completed successfully.
