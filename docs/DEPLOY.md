@@ -84,4 +84,4 @@ The generated legacy transport module is checked in. The clean `npm ci --ignore-
 
 See [PRIVATE_IMAGES.md](PRIVATE_IMAGES.md) for limits, original-day reservation settlement, synchronous timeout behavior, cleanup recovery and the synthetic live acceptance checks still required. No v5.1 live checks or deployment were performed during implementation.
 
-The release owner manages the shared daily amount separately through the existing settings guard. Review tests exercise a synthetic USD 5 daily limit and the USD 1 private per-call maximum.
+The shared daily amount is USD 5 in `wrangler.jsonc` and the deploy script's settings guard, which allows the change from USD 1 on the first v5.1 deploy. CI checks the generated legacy wrapper as its own step. Review tests exercise a synthetic USD 5 daily limit and the USD 1 private per-call maximum.
