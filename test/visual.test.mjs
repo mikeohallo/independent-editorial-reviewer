@@ -242,6 +242,7 @@ test('numeric-only reservations retain their full debit and cannot credit a gues
   const {budget}=environment(),body={id:'f'.repeat(64),amount:0.8,kind:'visual-v5.1'};
   await budget.ctx.storage.put('job:'+body.id,0.8);
   assert.equal((await(await ledgerCall(budget,'reserve',body)).json()).reserved,0.8);
+  assert.equal((await ledgerCall(budget,'reserve',{...body,amount:0.81})).status,409);
   const receipt=await(await ledgerCall(budget,'release',{...body,outcome:'unsubmitted'})).json();
   assert.equal(receipt.status,'legacy_retained');assert.equal(receipt.refunded_usd,0);
   assert.equal(budget.ctx.storage.data.size,1);
@@ -322,4 +323,38 @@ test('a mismatched ledger receipt cannot confirm a refund',async t=>{
   const budgetResult=reviewBudget(await call(env));
   assert.equal(budgetResult.settlement_status,'pending');assert.equal(budgetResult.reservation_refunded,false);
   assert.equal(budgetResult.refunded_usd,0);assert.equal(budgetResult.settled_usd,null);
+});
+
+for (const [outcome, retained] of [['completed', 0.02], ['unsubmitted', 0], ['uncertain', 0.30]]) {
+  test('reserve rejects a closed visual ID after ' + outcome, async () => {
+    const {budget} = environment();
+    const hold = {id:'c'.repeat(64), amount:0.30, kind:'visual-v5.1'};
+    assert.equal((await ledgerCall(budget,'reserve',hold)).status,200);
+    const receipt = await (await ledgerCall(budget,'release',{
+      ...hold, outcome, estimated_cost_usd:0.012
+    })).json();
+    for (const replay of [hold, {...hold,kind:undefined}]) {
+      const response = await ledgerCall(budget,'reserve',replay);
+      assert.equal(response.status,409);
+      assert.equal((await response.json()).error,'Reservation already closed');
+    }
+    assert.equal(await budget.ctx.storage.get('day:'+receipt.day),retained);
+  });
+}
+
+test('active reservations replay only with the recorded amount and kind',async()=>{
+  const {budget}=environment();
+  const visual={id:'d'.repeat(64),amount:0.30,kind:'visual-v5.1'};
+  const whole={id:'e'.repeat(64),amount:0.35};
+  for(const hold of [visual,whole]){
+    for(let i=0;i<2;i++){
+      const response=await ledgerCall(budget,'reserve',hold);
+      assert.equal(response.status,200);
+      assert.deepEqual(await response.json(),{reserved:hold.amount});
+    }
+    assert.equal((await ledgerCall(budget,'reserve',{...hold,amount:0.20})).status,409);
+  }
+  assert.equal((await ledgerCall(budget,'reserve',{...visual,kind:undefined})).status,409);
+  assert.equal((await ledgerCall(budget,'reserve',{...whole,kind:visual.kind})).status,409);
+  assert.equal(await budget.ctx.storage.get('day:'+new Date().toISOString().slice(0,10)),0.65);
 });

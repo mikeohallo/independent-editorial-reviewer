@@ -14,11 +14,11 @@ Source candidate `5.1.0-candidate.1`, 18 November 2026. v5.1 has not been deploy
 
 ## Release-review verification (20 November 2026)
 
-On Node 22.23.5, `npm ci` succeeded, all 154 unit tests passed and all 10 runtime tests passed. Both suites reported zero skips. The public-repository check passed locally. GitHub CI supplies the private-name and secret scans and the browser consent check.
+On Node 22.23.5, `npm ci` succeeded, all 158 unit tests passed and all 11 runtime tests passed. Both suites reported zero skips. The public-repository check passed locally. GitHub CI supplies the private-name and secret scans and the browser consent check.
 
-Settlement tests cover fractional cents, full pre-submission release, retention after an uncertain paid submission, repeated release, delayed reservation, loss or mismatch of settlement acknowledgements, restarts, original-day credits across midnight and historical numeric records. Workerd tests exercise a shared USD 5 test ledger with competing reservations and releases, while protecting the USD 1 private per-call limit. Accelerated offline deadlines exercise slow preparation, late admission, successful inference beyond the former fixed allocation, timeout, cleanup and replay.
+Settlement tests cover fractional cents, full pre-submission release, retention after an uncertain paid submission, repeated release, delayed reservation, loss or mismatch of settlement acknowledgements, restarts, original-day credits across midnight and historical numeric records. Reserve replay tests cover matching and mismatched holds, closed IDs after every settlement outcome, and a same-ID settle/re-reserve race in SQLite. Workerd tests exercise a shared USD 5 test ledger with competing reservations and releases, while protecting the USD 1 private per-call limit. Accelerated offline deadlines exercise slow preparation, late admission, successful inference beyond the former fixed allocation, timeout, cleanup and replay.
 
-The latest workerd run measured 60.73 MiB for the six-image batch and 46.97 MiB for JPEG validation and upload. The 96 MiB check samples V8 heap and backing storage. Production latency, provider charges and native isolate overhead still need live validation.
+The latest workerd run measured 59.81 MiB for the six-image batch and 46.98 MiB for JPEG validation and upload. The 96 MiB check samples V8 heap and backing storage. Production latency, provider charges and native isolate overhead still need live validation.
 
 ## v5.1 local evidence (19 November 2026)
 

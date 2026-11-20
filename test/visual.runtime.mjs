@@ -139,3 +139,28 @@ test('SQLite ledger shares configured five-dollar capacity and serializes compet
     assert.equal(r.net.inferences().length,1);
   }finally{await r.mf.dispose();}
 });
+
+test('SQLite same-ID settlement racing reserve replay cannot reopen or debit the hold twice',async()=>{
+  const r=await runtime();
+  try{
+    const ns=await r.mf.getDurableObjectNamespace('EDITORIAL_BUDGET');
+    const stub=ns.get(ns.idFromName('editorial-budget'));
+    const hold={id:await sha256('test-replay-race'),amount:1,kind:'visual-v5.1'};
+    const post=(route,body)=>stub.fetch('https://budget.internal/'+route,{
+      method:'POST',body:JSON.stringify(body)
+    });
+    assert.equal((await post('reserve',hold)).status,200);
+    const [settled,replay]=await Promise.all([
+      post('release',{...hold,outcome:'completed',estimated_cost_usd:0.012}),
+      post('reserve',hold)
+    ]);
+    assert.equal(settled.status,200);
+    assert.equal((await settled.json()).settled_usd,0.02);
+    // Both serial orders are valid. A replay ordered after settlement must fail.
+    assert.ok([200,409].includes(replay.status));
+    assert.equal((await post('reserve',hold)).status,409);
+    assert.equal((await post('reserve',{...hold,id:await sha256('test-remaining'),amount:0.98})).status,200);
+    assert.equal((await post('reserve',{...hold,id:await sha256('test-overflow'),amount:0.01})).status,409);
+    assert.equal(r.net.calls.length,0);
+  }finally{await r.mf.dispose();}
+});

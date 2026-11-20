@@ -2,6 +2,7 @@ import Big from 'big.js';
 import {json} from './io.mjs';
 
 const VISUAL = 'visual-v5.1';
+const WHOLE_WORK = 'whole-work';
 const positive = value => Number.isFinite(value) && value > 0;
 
 // Keep the numeric keys readable by the previous implementation. Decimal totals
@@ -54,11 +55,24 @@ export class EditorialBudgetCore {
       ? this.reserve(tx, body) : this.release(tx, body));
   }
 
-  async reserve(tx, {id, amount, kind}) {
-    const prior = await tx.get('job:' + id);
-    if (prior != null) return json({reserved:prior});
+  async reserve(tx, {id, amount, kind = WHOLE_WORK}) {
     const visualKey = 'visual-budget:' + id;
-    if (await tx.get(visualKey)) return json({error:'Reservation already closed'}, 409);
+    const visual = await tx.get(visualKey);
+    if (visual?.settlement) return json({error:'Reservation already closed'}, 409);
+    if (kind !== VISUAL && kind !== WHOLE_WORK) return json({error:'Unknown reservation kind'}, 400);
+
+    const prior = await tx.get('job:' + id);
+    if (prior != null) {
+      // Numeric-only historical holds have no kind or original day. Replaying
+      // the same amount acknowledges the old debit without upgrading it.
+      const storedKind = visual ? VISUAL : await tx.get('job-kind:' + id);
+      if (prior !== amount || (visual && visual.authorized !== prior) ||
+          (storedKind !== undefined && storedKind !== kind))
+        return json({error:'Reservation amount or kind mismatch'}, 409);
+      return json({reserved:prior});
+    }
+    if (visual) return json({error:'Inconsistent reservation ledger'}, 409);
+
     const day = new Date().toISOString().slice(0, 10);
     const limit = Number(this.env.EDITORIAL_DAILY_USD || 10);
     if (!positive(limit)) return json({error:'Invalid daily budget configuration'}, 400);
@@ -66,6 +80,7 @@ export class EditorialBudgetCore {
     if (total.gt(limit)) return json({error:'Daily editorial budget reservation limit reached. No inference started.'}, 409);
     const entries = {...dailyEntries(day, total), ['job:' + id]:amount};
     if (kind === VISUAL) entries[visualKey] = {day, authorized:amount, settlement:null};
+    else entries['job-kind:' + id] = WHOLE_WORK;
     await tx.put(entries);
     return json({reserved:amount});
   }
