@@ -41,6 +41,8 @@ If your change needs one of these, say so in the issue and stop.
 
 The review tools make paid OpenAI calls. Don't call any review tool against a live server. Keep the per-job and daily caps. Never add an automatic retry of a paid call.
 
+The one exception is a release acceptance run that the owner approves on that release's issue. It uses synthetic images only and is run by the release owner. The approval states the number of calls, the amount authorised per call and the total limit. A paid call in the run is never retried automatically; the run stops at the first failure.
+
 ## 6. Checks that run on every push
 
 CI runs these on every branch and pull request. A failure blocks the merge:
