@@ -1,7 +1,7 @@
 {
   "name": "claude-openai-editorial-reviewer",
   "private": true,
-  "version": "5.1.0-candidate.1",
+  "version": "5.1.1-candidate.1",
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs",

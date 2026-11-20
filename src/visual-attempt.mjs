@@ -6,6 +6,20 @@ import {privateConfiguration,validateLegacy,normalizeLegacy,validateResponse} fr
 
 let occupied = false;
 const errorResult = message => ({isError:true,content:[{type:'text',text:message}]});
+// Some MCP clients pass only the text content to the model. Repeat the
+// evidence there, so a caller can see which bytes a review covered. File
+// names, Drive identifiers and provider file identifiers stay out of it.
+const usd = value => typeof value==='number'&&Number.isFinite(value)?`$${Number(value.toFixed(6))}`:'unknown';
+export function evidenceText({sources,attempt,budget,cleanup}) {
+  const lines=[`Attempt: ${attempt.id}; status ${attempt.status}; OpenAI calls: ${attempt.api_calls}; upload outcome: ${cleanup.unknown_upload?'unknown':'known'}.`];
+  if(budget.settlement_status==='confirmed'&&typeof budget.settled_usd==='number')
+    lines.push(`Budget: settled ${usd(budget.settled_usd)} ${budget.estimated_cost_usd==null?'with no usage estimate':`on a conservative estimate of ${usd(budget.estimated_cost_usd)}`}; budget day ${budget.budget_day}.`);
+  else if(budget.settlement_status==='not_applicable'&&budget.reservation_status==='not_requested') lines.push('Budget: no reservation was made.');
+  else lines.push(`Budget: not settled (settlement status: ${budget.settlement_status}; reservation status: ${budget.reservation_status}).`);
+  if(!sources.length) lines.push('Sources: none verified.');
+  else lines.push('Sources:',...sources.map((s,i)=>`${i+1}. ${s.role} | ${s.width}x${s.height} | ${s.bytes} bytes | transformed: ${s.transformed} | sha256 ${s.sha256}`));
+  return lines.join('\n');
+}
 // An internal request can finish in the ledger after its caller times out.
 // Bound the caller's wait too. The durable intent reconciles that ambiguity.
 async function budgetRequest(env,route,body,signal) {
@@ -200,7 +214,7 @@ export class VisualAttempt {
         expiry_seconds:86400,attempts:record.cleanup_rounds},
       limitations:['No resizing or re-encoding. Model-side image dimensions are not reported.',
         'Legacy editorial rules and verdict reconciliation are unchanged. Reservations are estimates, not a billing cap.']};
-    const suffix=`\n\nPrivate image handling: ${record.state}; authorized reservation $${record.reserved_usd}; confirmed release $${handling.budget.refunded_usd} (${handling.budget.settlement_status}); ${record.files.length} pending deletions${record.unknown_upload?'; upload outcome unknown, expiry fallback requested':''}.`;
+    const suffix=`\n\nPrivate image handling: ${record.state}; authorized reservation $${record.reserved_usd}; confirmed release $${handling.budget.refunded_usd} (${handling.budget.settlement_status}); ${record.files.length} pending deletions${record.unknown_upload?'; upload outcome unknown, expiry fallback requested':''}.\n${evidenceText(handling)}`;
     return {...result,content:[...(result.structuredContent?.private_image_handling?result.content.slice(0,-1):result.content??[]),{type:'text',text:suffix}],
       structuredContent:{...result.structuredContent,private_image_handling:handling}};
   }

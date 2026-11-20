@@ -358,3 +358,49 @@ test('active reservations replay only with the recorded amount and kind',async()
   assert.equal((await ledgerCall(budget,'reserve',{...whole,kind:visual.kind})).status,409);
   assert.equal(await budget.ctx.storage.get('day:'+new Date().toISOString().slice(0,10)),0.65);
 });
+const handlingBlocks = r => r.content.filter(x=>x.text.includes('Private image handling:'));
+test('private result repeats its evidence in the final text block',async t=>{
+  const {env,net}=setup(t);const first=await call(env);assert.ok(!first.isError,message(first));
+  const h=first.structuredContent.private_image_handling,text=first.content.at(-1).text,lines=text.split('\n');
+  assert.deepEqual(lines.slice(0,3),['','','Private image handling: completed; authorized reservation $0.3; confirmed release $0.29 (confirmed); 0 pending deletions.']);
+  assert.deepEqual(lines.slice(3),[
+    `Attempt: ${h.attempt.id}; status completed; OpenAI calls: 1; upload outcome: known.`,
+    `Budget: settled $0.01 on a conservative estimate of $0.0015; budget day ${h.budget.budget_day}.`,
+    'Sources:',
+    `1. page | 2x2 | ${png().length} bytes | transformed: false | sha256 ${await sha256(png())}`]);
+  assert.match(h.attempt.id,/^[0-9a-f]{64}$/);assert.match(h.budget.budget_day,/^\d{4}-\d{2}-\d{2}$/);
+  // File names, Drive identifiers and provider file identifiers stay out of the text.
+  assert.ok(!/synthetic|test-image-001|file_test/.test(text));
+  assert.equal(net.inferences().length,1);
+});
+test('replays rebuild one evidence block and never stack a second copy',async t=>{
+  const {env,net}=setup(t);const first=await call(env);assert.equal(handlingBlocks(first).length,1);
+  for(let i=0;i<3;i++){const replay=await call(env);assert.deepEqual(replay.content,first.content);assert.deepEqual(replay.structuredContent,first.structuredContent);}
+  assert.equal(net.inferences().length,1);assert.equal(net.media().length,1);assert.equal(net.uploads(),1);
+});
+test('uncertain attempt prints the retained reservation and its sources, stable across replays',async t=>{
+  const {env,net}=setup(t,{handle:async(r,u)=>{if(u.pathname==='/v1/responses')throw Error('Simulated interruption');}});
+  const first=await call(env);assert.equal(first.isError,true);
+  const h=first.structuredContent.private_image_handling,text=first.content.at(-1).text;
+  assert.equal(h.attempt.status,'uncertain');
+  assert.ok(text.includes(`Attempt: ${h.attempt.id}; status uncertain; OpenAI calls: 1; upload outcome: known.`));
+  assert.ok(text.includes(`Budget: settled $0.3 with no usage estimate; budget day ${h.budget.budget_day}.`));
+  assert.ok(text.endsWith(`Sources:\n1. page | 2x2 | ${png().length} bytes | transformed: false | sha256 ${await sha256(png())}`));
+  for(let i=0;i<2;i++){const replay=await call(env);assert.deepEqual(replay.content,first.content);assert.equal(handlingBlocks(replay).length,1);}
+  assert.equal(net.inferences().length,1);
+});
+test('attempt that fails before image preparation prints no sources and no settlement',async t=>{
+  const {env,net}=setup(t,{handle:async(r,u)=>u.searchParams.has('alt')?new Response(null,{status:302,headers:{location:'https://other.example.com/image'}}):null});
+  const first=await call(env);assert.equal(first.isError,true);
+  const h=first.structuredContent.private_image_handling,text=first.content.at(-1).text;
+  assert.ok(text.includes(`Attempt: ${h.attempt.id}; status failed; OpenAI calls: 0; upload outcome: known.`));
+  assert.ok(text.includes('Budget: no reservation was made.'));assert.ok(text.endsWith('Sources: none verified.'));
+  assert.ok(!text.includes('sha256'));assert.ok(!/settled \$/.test(text));
+  const replay=await call(env);assert.deepEqual(replay.content,first.content);assert.equal(net.inferences().length,0);
+});
+test('lost upload response prints an unknown upload outcome and no sources',async t=>{
+  const {env,net}=setup(t,{handle:async(r,u)=>{if(u.pathname==='/v1/files')throw Error('Upload outcome unknown');}});
+  const text=(await call(env)).content.at(-1).text;
+  assert.ok(text.includes('OpenAI calls: 0; upload outcome: unknown.'));assert.ok(text.endsWith('Sources: none verified.'));
+  assert.equal(net.inferences().length,0);
+});

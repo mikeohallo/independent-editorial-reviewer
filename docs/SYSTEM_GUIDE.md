@@ -1,6 +1,6 @@
 # Independent OpenAI Reviewer MCP — Complete System Guide
 
-**Source candidate:** `5.1.0-candidate.1` (editorial rubric `independent-editorial-general-v1`)
+**Source candidate:** `5.1.1-candidate.1` (editorial rubric `independent-editorial-general-v1`)
 **Legacy engine:** v4.1.0 (preserved)  
 **Document date:** 18 November 2026  
 **Status:** v5.1 is an undeployed candidate. Existing rollout notes below describe the earlier deployment, not validation of v5.1.
@@ -282,6 +282,7 @@ Job state and the report are also retained in Cloudflare Durable Objects. `get_e
 | Production Worker | v5 active, `/health` online; all six required secrets; legacy-tool validation tests passed | Verified |
 | Claude connector | All five tools discovered; `get_editorial_review(invalid)` returned the expected error | Verified |
 | Full paid editorial review on production | Not yet run; staging demonstrated the flow | **Not separately verified** |
+| Private image reviews on production (v5.1) | 20 Nov 2026 release acceptance run, synthetic images: one paid call to each of `review_illustration` and `review_comic_lettering` completed, settlement confirmed, no pending deletions; a replay returned the stored result. Provenance fields were not read through the text-only client | Verified **for one synthetic fixture each**; provenance read pending |
 | Broad editorial accuracy across real varied works | No benchmark suite yet | **Not established** |
 | Finished-art/PDF and revision-comparison production performance | Functionality exists, but no comparable end-to-end evidence from rollout | **Not established** |
 

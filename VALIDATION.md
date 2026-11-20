@@ -1,6 +1,6 @@
 # Validation
 
-Source candidate `5.1.0-candidate.1`, 18 November 2026. v5.1 has not been deployed or tested with paid services. Earlier live rollout records remain in the System Guide.
+Source candidate `5.1.1-candidate.1`, 20 November 2026. v5.1 was first deployed on 20 November 2026 as `5.1.0-candidate.1`. In a release acceptance run on production with synthetic images, one paid private-image call to each of `review_illustration` and `review_comic_lettering` completed with the expected findings, a confirmed budget settlement and no pending deletions, and a replay returned the stored result. The client used passes only text content to the model, so the provenance fields in `structuredContent` were not read in that run; `5.1.1-candidate.1` prints them in the review text so they can be read from a replay. Earlier live rollout records remain in the System Guide.
 
 ## Checked on every push (GitHub Actions, `.github/workflows/ci.yml`)
 

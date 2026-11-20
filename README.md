@@ -4,7 +4,7 @@ An MCP server on Cloudflare Workers that gives Claude a second opinion from a di
 
 It's a personal tool, built and run for one owner's creative projects, and published as an example of a small, production-run AI service: paid calls behind budgets, sign-in behind OAuth, and deploys only from a reviewed commit.
 
-**Source candidate:** `5.1.0-candidate.1`. The protected v4.1.0 engine is unchanged. This candidate has not been deployed. See [private image support](docs/PRIVATE_IMAGES.md) for the new Drive path and its limits.
+**Source candidate:** `5.1.1-candidate.1`. The protected v4.1.0 engine is unchanged. v5.1 was first deployed on 20 November 2026 as `5.1.0-candidate.1`; this candidate also prints the private-image evidence in the review text. See [private image support](docs/PRIVATE_IMAGES.md) for the new Drive path and its limits.
 
 ## Tools
 

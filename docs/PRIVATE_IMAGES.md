@@ -1,6 +1,6 @@
 # Private images in v5.1
 
-Candidate `5.1.0-candidate.1` extends `review_illustration` and `review_comic_lettering`. The five tool names, public endpoints, OAuth implementation, editorial prompts and scoring remain unchanged. This candidate has not been deployed or validated against paid services.
+v5.1 (current candidate `5.1.1-candidate.1`) extends `review_illustration` and `review_comic_lettering`. The five tool names, public endpoints, OAuth implementation, editorial prompts and scoring remain unchanged. v5.1 was first deployed on 20 November 2026; `VALIDATION.md` records what has been checked live.
 
 ## Calling the tools
 
@@ -74,7 +74,7 @@ OpenAI Files receives the original bytes with purpose `user_data` and requested 
 
 Known uploaded file IDs are persisted immediately and deletion is attempted on success and failure. Up to three further alarm rounds retry file deletion. The same alarm reconciles pending settlement receipts with backoff up to one hour. An outstanding receipt can be recovered after review-cache expiry. A lost upload response has no recoverable ID; requested expiry is the fallback. Cleanup status is durable and appears in replayed results. Normal cache expiry removes review text and source metadata, retaining the request identity tombstone. These controls do not override OpenAI's own data retention policies.
 
-Existing review fields are preserved, with additive `structuredContent.private_image_handling` containing provenance, attempt status, conservative cost accounting, cleanup status and limitations. Legacy `usage` pricing remains the legacy presentation; use the additive budget fields for the new conservative estimate. Legacy service-version fields identify the unchanged engine; application discovery and health identify v5.1.
+Existing review fields are preserved, with additive `structuredContent.private_image_handling` containing provenance, attempt status, conservative cost accounting, cleanup status and limitations. Some MCP clients pass only text content to the model, so the final text block repeats the evidence: the attempt ID and status, the number of OpenAI calls, the upload outcome, the settlement, and each source's role, dimensions, byte count, `transformed` flag and SHA-256. A review that fails before its images are prepared prints `Sources: none verified.` File names, Drive identifiers and provider file identifiers are not printed. A replay rebuilds this block from the stored record. Legacy `usage` pricing remains the legacy presentation; use the additive budget fields for the new conservative estimate. Legacy service-version fields identify the unchanged engine; application discovery and health identify v5.1.
 
 ## Implementation and verification
 
