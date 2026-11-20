@@ -1,12 +1,14 @@
 # Independent OpenAI Reviewer MCP — Complete System Guide
 
-**Production version:** `5.0.0-clean-workspace.1` (editorial rubric `independent-editorial-general-v1`)  
+**Source candidate:** `5.1.0-candidate.1` (editorial rubric `independent-editorial-general-v1`)
 **Legacy engine:** v4.1.0 (preserved)  
 **Document date:** 18 November 2026  
-**Status:** Active in Cloudflare production and discoverable in Claude; end-to-end editorial review tested in staging  
+**Status:** v5.1 is an undeployed candidate. Existing rollout notes below describe the earlier deployment, not validation of v5.1.
 **Document purpose:** What the system does, how to use it, where information flows, its controls, and how to maintain it.
 
 > This guide describes the inspected v5 source plus the deployment and live tests verified during rollout. It is documentation, not a guarantee of editorial accuracy or a substitute for the current deployed configuration. Do not put API keys, MCP tokens, OAuth refresh tokens, or customer manuscripts in this repository.
+
+The [v5.1 private image guide](PRIVATE_IMAGES.md) supplements the two visual tools with private Drive locators, durable attempt tracking, budget enforcement and cleanup. Legacy URL/data calls retain their previous behavior. The deployment history below is unchanged.
 
 ## 1. At a glance
 
@@ -254,7 +256,7 @@ Supported v5 source types include plain text, Markdown, JSON, PDF, exportable na
 | Background execution guards | 2-hour overall limit; 45 minutes per model pass |
 | Current production estimated ceilings | **US$1 per job** and **US$1 total daily reservations** |
 
-**Budget semantics matter:** `EDITORIAL_MAX_JOB_USD` is the maximum amount a user may *authorise* for one job; `max_cost_usd` is required on each request. `EDITORIAL_DAILY_USD` currently tracks **the sum of entire authorised job reservations for each UTC day**, not just final OpenAI charges. The present code does **not** refund unused daily reservation capacity after a cheap or blocked job. For example, one job authorised for US$1 consumes the full US$1 daily reservation allowance even if estimated usage ultimately comes to US$0.06. This is a conservative admission rule, not an OpenAI billing cap. These two settings should be revisited when regular usage begins.
+**Whole-work job reservations:** `EDITORIAL_MAX_JOB_USD` is the maximum amount a user may *authorise* for one job; `max_cost_usd` is required on each request. `EDITORIAL_DAILY_USD` sets one UTC-day limit for both review types. Whole-work jobs reserve their entire authorization. Private image calls settle verified usage as described in [PRIVATE_IMAGES.md](PRIVATE_IMAGES.md). Whole-work jobs retain unused reservations after a cheap or blocked job. For example, one job authorised for US$1 consumes the full US$1 daily reservation allowance even if estimated usage ultimately comes to US$0.06. This is a conservative admission rule, not an OpenAI billing cap. These two settings should be revisited when regular usage begins.
 
 Price estimates use configuration-defined rates and observed tokens; they are **not invoices or guaranteed maximum provider charges**. Google/Cloudflare hosting costs are separate. Model changes require checking price configuration and output compatibility.
 

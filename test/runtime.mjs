@@ -48,3 +48,6 @@ test('Cloudflare runtime: authenticated MCP, SQLite jobs, real alarms and saved 
     assert.equal(status.status,'completed',JSON.stringify(status));assert.equal(calls,2);assert.equal(saves,2);assert.match(status.markdown,/Page 1/);
   }finally{await mf.dispose();}
 });
+
+// Included by the existing runtime command and release checks without changing CI.
+import './visual.runtime.mjs';

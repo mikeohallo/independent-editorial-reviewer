@@ -1,3 +1,7 @@
+import {VisualAttempt} from './visual-attempt.mjs';
+import {VISUAL_TOOLS,imageMode,extendVisualSchema,privateConfiguration,validateLegacy} from './visual-review.mjs';
+import {LIMITS} from './visual-limits.mjs';
+import {readRPC} from './rpc-body.mjs';
 import legacy from './legacy-v4.1.mjs';
 import {VERSION,RUBRIC_VERSION,START_TOOL,GET_TOOL,COLD_SCHEMA,REPORT_SCHEMA,COLD_INSTRUCTIONS,ASSESS_INSTRUCTIONS,COMPARE_INSTRUCTIONS,validateArgs,validateCold,validateReport,phaseInput,renderReport} from './editorial.mjs';
 import {json,sha256,stable,api,sourceBytes,uploadSnapshot,assertReportFolder,priceConfig,estimateCost,putLarge,getLarge,saveDriveReports,reserveReportIds,MAX_CONTEXT_BYTES,driveAccessMode,workspaceConfiguration,assertWorkspaceFolderLayout} from './io.mjs';
@@ -16,6 +20,7 @@ function configuration(env){
 }
 export default {
   async fetch(request,env,ctx){
+    const requestStarted=Date.now();
     const url=new URL(request.url);
     if(url.pathname==='/'||url.pathname==='/health')return json({service:'claude-openai-reviewer',status:'online',version:VERSION,legacy_engine:'4.1.0',editorial_enabled:env.EDITORIAL_ENABLED==='1',mcpEndpoint:'/mcp'});
     if(url.pathname!=='/mcp')return legacy.fetch(request,env,ctx);
@@ -24,17 +29,37 @@ export default {
     if(!env.MCP_ACCESS_TOKEN)return json({error:'Server not configured'},503);
     if(!safeEqual(request.headers.get('x-api-key')||'',env.MCP_ACCESS_TOKEN))return json({error:'Unauthorized'},401);
     if(request.method!=='POST')return legacy.fetch(request,env,ctx);
-    let raw,body;
-    try{raw=await request.clone().text();if(raw.length>16000000)return json({error:'Request too large'},413);body=JSON.parse(raw);}catch{return json({jsonrpc:'2.0',id:null,error:{code:-32700,message:'Parse error'}});}
-    if(body?.jsonrpc!=='2.0'||body.id===undefined)return legacy.fetch(request,env,ctx);
+    let parsed;
+    try{parsed=await readRPC(request);}catch(e){return e.status===413?json({error:'Request too large'},413):json({jsonrpc:'2.0',id:null,error:{code:-32700,message:'Parse error'}});}
+    const body=parsed.body;
+    const legacyRequest=()=>new Request(request.url,{method:'POST',headers:request.headers,body:parsed.raw});
+    if(body?.jsonrpc!=='2.0'||body.id===undefined)return legacy.fetch(legacyRequest(),env,ctx);
     if(body.method==='tools/list'||body.method==='initialize'){
-      const response=await legacy.fetch(request,env,ctx);const data=await response.json();
-      if(body.method==='tools/list'&&data.result)data.result.tools.push(START_TOOL,GET_TOOL);
+      const response=await legacy.fetch(legacyRequest(),env,ctx);const data=await response.json();
+      if(body.method==='tools/list'&&data.result)data.result.tools=[...data.result.tools.map(extendVisualSchema),START_TOOL,GET_TOOL];
       if(data.result?.serverInfo)data.result.serverInfo.version=VERSION;
       if(data.result?._meta?.['io.modelcontextprotocol/serverInfo'])data.result._meta['io.modelcontextprotocol/serverInfo'].version=VERSION;
       return json(data,response.status);
     }
-    if(body.method!=='tools/call'||![START_TOOL.name,GET_TOOL.name].includes(body.params?.name))return legacy.fetch(request,env,ctx);
+    if(body.method==='tools/call'&&VISUAL_TOOLS.includes(body.params?.name)) {
+      try {
+        const args=body.params.arguments;
+        if(imageMode(args)==='drive') {
+          if(parsed.bytes>LIMITS.jsonBytes)throw Error('Private image JSON exceeds 256 KiB.');
+          parsed.raw=null; // No cloned stream or large ingress buffer survives preparation.
+          privateConfiguration(env,args);
+          await validateLegacy(body.params.name,args,env); // Validate all editorial inputs before external I/O.
+          const id=await sha256(`visual-v5.1:${args.request_key}`),fingerprint=await sha256(stable({name:body.params.name,args}));
+          const r=await env.EDITORIAL_JOBS.get(env.EDITORIAL_JOBS.idFromName(id)).fetch('https://editorial.internal/visual',{
+            method:'POST',body:JSON.stringify({id,fingerprint,name:body.params.name,args,started_at:requestStarted})});
+          const result=await r.json();
+          if(body.params?._meta?.['io.modelcontextprotocol/protocolVersion']==='2026-07-28')
+            result._meta={'io.modelcontextprotocol/serverInfo':{name:'claude-openai-reviewer',version:VERSION}};
+          return json({jsonrpc:'2.0',id:body.id,result});
+        }
+      }catch(e){return json({jsonrpc:'2.0',id:body.id,result:toolError(e)});}
+    }
+    if(body.method!=='tools/call'||![START_TOOL.name,GET_TOOL.name].includes(body.params?.name))return legacy.fetch(legacyRequest(),env,ctx);
     let result;
     try{
       if(body.params.name===START_TOOL.name){
@@ -56,25 +81,13 @@ export default {
   }
 };
 
-export class EditorialBudgetCore {
-  constructor(ctx,env){this.ctx=ctx;this.env=env;}
-  async fetch(request){
-    const {id,amount}=await request.json();
-    if(!/^[a-f0-9]{64}$/.test(id)||!Number.isFinite(amount)||amount<=0)return json({error:'Invalid budget reservation'},400);
-    const day=new Date().toISOString().slice(0,10),limit=Number(this.env.EDITORIAL_DAILY_USD||10);
-    return this.ctx.storage.transaction(async tx=>{
-      const prior=await tx.get(`job:${id}`);if(prior!=null)return json({reserved:prior});
-      const spent=await tx.get(`day:${day}`)||0;
-      if(spent+amount>limit)return json({error:`Daily editorial budget reservation limit ($${limit}) reached. No inference started.`},409);
-      await tx.put({[`job:${id}`]:amount,[`day:${day}`]:spent+amount});return json({reserved:amount});
-    });
-  }
-}
+export {EditorialBudgetCore} from './budget.mjs';
 
 export class EditorialJobCore {
-  constructor(ctx,env){this.ctx=ctx;this.env=env;this.running=false;}
+  constructor(ctx,env){this.ctx=ctx;this.env=env;this.running=false;this.visual=new VisualAttempt(ctx,env);}
   async fetch(request){
     const path=new URL(request.url).pathname;
+    if(path==='/visual')return this.visual.fetch(request);
     if(path==='/start'){
       const incoming=await request.json();
       let response;
@@ -106,6 +119,7 @@ export class EditorialJobCore {
     return data;
   }
   async alarm(){
+    if(await this.ctx.storage.get('visual'))return this.visual.alarm();
     if(this.running)return;
     this.running=true;
     let job=await this.ctx.storage.get('job');

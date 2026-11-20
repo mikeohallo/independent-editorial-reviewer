@@ -75,3 +75,13 @@ Cloudflare keeps earlier versions, but `workers_dev` and the custom domain are s
 ## Rehearsal
 
 `node scripts/deploy.mjs <commit> --settings <test file> --rehearse` runs every step up to the login on a non-Windows machine, from a fresh clone made the way Git for Windows makes it (`core.autocrlf=true`), and writes its report beside the clone. It is how a change to the script is tried before the owner's line. The browser test (`python test/browser/consent_browser.py`) runs in CI.
+
+## v5.1 candidate release notes
+
+The private image path uses the existing jobs and budget bindings. No new route, binding, migration, scope or Cloudflare resource is required. The protected deployment script, configuration, OAuth code and CI workflows remain unchanged; deployment stays with the release owner after separate owner authorization.
+
+The generated legacy transport module is checked in. The clean `npm ci --ignore-scripts` install does not regenerate source. `npm test` checks its exact regeneration and protected-source hash. The existing runtime entry point also imports private-image and memory tests, so the release script runs them without changing its command list.
+
+See [PRIVATE_IMAGES.md](PRIVATE_IMAGES.md) for limits, original-day reservation settlement, synchronous timeout behavior, cleanup recovery and the synthetic live acceptance checks still required. No v5.1 live checks or deployment were performed during implementation.
+
+The release owner manages the shared daily amount separately through the existing settings guard. Review tests exercise a synthetic USD 5 daily limit and the USD 1 private per-call maximum.
